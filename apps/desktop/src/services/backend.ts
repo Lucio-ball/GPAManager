@@ -1,21 +1,65 @@
-import { buildMockImportResult, buildMockPlanningTarget, mockSnapshot } from "@/data/mock-gpa-data";
+import { mockDesktopApi } from "@/data/mock-gpa-data";
 import { invokeBridge } from "@/services/bridge";
-import type { AppSnapshot, ImportKind, ImportWorkbenchResult, PlanningTargetResult } from "@/types/domain";
-
-function deepClone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
+import type {
+  AppSnapshot,
+  CourseDeleteResult,
+  CourseRecord,
+  CourseUpsertPayload,
+  ImportKind,
+  ImportWorkbenchResult,
+  PlanningExpectationSavePayload,
+  PlanningTargetResult,
+  ScoreUpsertPayload,
+} from "@/types/domain";
 
 export const desktopApi = {
   async getSnapshot(): Promise<AppSnapshot> {
-    return invokeBridge<AppSnapshot>("snapshot", undefined, () => deepClone(mockSnapshot));
+    return invokeBridge<AppSnapshot>("snapshot", undefined, () => mockDesktopApi.getSnapshot());
+  },
+
+  async createCourse(payload: CourseUpsertPayload): Promise<CourseRecord> {
+    return invokeBridge<CourseRecord>("course.create", payload, () => mockDesktopApi.createCourse(payload));
+  },
+
+  async updateCourse(courseId: string, payload: CourseUpsertPayload): Promise<CourseRecord> {
+    return invokeBridge<CourseRecord>(
+      "course.update",
+      { courseId, ...payload },
+      () => mockDesktopApi.updateCourse(courseId, payload),
+    );
+  },
+
+  async deleteCourse(courseId: string): Promise<CourseDeleteResult> {
+    return invokeBridge<CourseDeleteResult>(
+      "course.delete",
+      { courseId },
+      () => mockDesktopApi.deleteCourse(courseId),
+    );
+  },
+
+  async recordScore(payload: ScoreUpsertPayload): Promise<CourseRecord> {
+    return invokeBridge<CourseRecord>("score.record", payload, () => mockDesktopApi.recordScore(payload));
+  },
+
+  async clearScore(courseId: string): Promise<CourseRecord> {
+    return invokeBridge<CourseRecord>("score.clear", { courseId }, () => mockDesktopApi.clearScore(courseId));
   },
 
   async createPlanningTarget(targetGpa: string): Promise<PlanningTargetResult> {
     return invokeBridge<PlanningTargetResult>(
       "planning.create_target",
       { targetGpa },
-      () => buildMockPlanningTarget(targetGpa),
+      () => mockDesktopApi.createPlanningTarget(targetGpa),
+    );
+  },
+
+  async savePlanningExpectations(
+    payload: PlanningExpectationSavePayload,
+  ): Promise<PlanningTargetResult> {
+    return invokeBridge<PlanningTargetResult>(
+      "planning.save_expectations",
+      payload,
+      () => mockDesktopApi.savePlanningExpectations(payload),
     );
   },
 
@@ -23,7 +67,7 @@ export const desktopApi = {
     return invokeBridge<ImportWorkbenchResult>(
       "import.run",
       { kind, text, apply },
-      () => buildMockImportResult(kind, text, apply),
+      () => mockDesktopApi.runImport(kind, text, apply),
     );
   },
 };

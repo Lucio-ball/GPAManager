@@ -30,7 +30,12 @@ export async function invokeBridge<T>(
 
     return parsed.data;
   } catch (error) {
-    console.warn("Falling back to mock desktop data.", error);
-    return fallback();
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "string"
+          ? error
+          : "Unknown desktop bridge error.";
+    throw new Error(message);
   }
 }

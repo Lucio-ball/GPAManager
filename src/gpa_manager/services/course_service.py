@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from decimal import Decimal
 
@@ -15,6 +16,8 @@ from gpa_manager.rules.base import RuleEngine
 
 
 class CourseService:
+    _SEMESTER_PATTERN = re.compile(r"^\d{4}(春|夏|秋|冬)$")
+
     def __init__(
         self,
         course_repository: CourseRepository,
@@ -168,12 +171,14 @@ class CourseService:
             raise ValidationError("课程学分必须大于 0。")
         return quantize_storage(decimal_credit)
 
-    @staticmethod
-    def _validate_course_identity(name: str, semester: str) -> None:
+    @classmethod
+    def _validate_course_identity(cls, name: str, semester: str) -> None:
         if not name or not name.strip():
             raise ValidationError("课程名称不能为空。")
         if not semester or not semester.strip():
             raise ValidationError("课程学期不能为空。")
+        if cls._SEMESTER_PATTERN.fullmatch(semester.strip()) is None:
+            raise ValidationError("课程学期格式必须为“年份+季节”，例如：2026春。")
 
     @staticmethod
     def _normalize_optional_text(value: str | None) -> str | None:

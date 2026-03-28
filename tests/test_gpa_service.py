@@ -41,8 +41,8 @@ class GpaCalculationServiceTests(unittest.TestCase):
     def test_gpa_is_weighted_by_credit(self) -> None:
         calculus = self.course_service.create_course(
             CourseCreateCommand(
-                name="高等数学",
-                semester="2025-2026-1",
+                name="Calculus",
+                semester="2025秋",
                 credit="4.0",
                 status=CourseStatus.COMPLETED,
                 score_type=ScoreType.PERCENTAGE,
@@ -50,8 +50,8 @@ class GpaCalculationServiceTests(unittest.TestCase):
         )
         english = self.course_service.create_course(
             CourseCreateCommand(
-                name="大学英语",
-                semester="2025-2026-1",
+                name="English",
+                semester="2025秋",
                 credit="2.0",
                 status=CourseStatus.COMPLETED,
                 score_type=ScoreType.GRADE,
@@ -71,8 +71,8 @@ class GpaCalculationServiceTests(unittest.TestCase):
     def test_planned_courses_are_excluded_from_gpa(self) -> None:
         completed = self.course_service.create_course(
             CourseCreateCommand(
-                name="线性代数",
-                semester="2025-2026-1",
+                name="Linear Algebra",
+                semester="2025秋",
                 credit="3.0",
                 status=CourseStatus.COMPLETED,
                 score_type=ScoreType.PERCENTAGE,
@@ -80,8 +80,8 @@ class GpaCalculationServiceTests(unittest.TestCase):
         )
         self.course_service.create_course(
             CourseCreateCommand(
-                name="离散数学",
-                semester="2025-2026-2",
+                name="Discrete Math",
+                semester="2026春",
                 credit="3.0",
                 status=CourseStatus.PLANNED,
                 score_type=ScoreType.PERCENTAGE,
@@ -98,8 +98,8 @@ class GpaCalculationServiceTests(unittest.TestCase):
     def test_completed_course_without_score_is_excluded_from_gpa(self) -> None:
         self.course_service.create_course(
             CourseCreateCommand(
-                name="概率论",
-                semester="2025-2026-1",
+                name="Probability",
+                semester="2025秋",
                 credit="3.0",
                 status=CourseStatus.COMPLETED,
                 score_type=ScoreType.PERCENTAGE,
@@ -115,8 +115,8 @@ class GpaCalculationServiceTests(unittest.TestCase):
     def test_cleared_score_is_excluded_from_gpa(self) -> None:
         course = self.course_service.create_course(
             CourseCreateCommand(
-                name="大学物理",
-                semester="2025-2026-1",
+                name="Physics",
+                semester="2025秋",
                 credit="4.0",
                 status=CourseStatus.COMPLETED,
                 score_type=ScoreType.PERCENTAGE,

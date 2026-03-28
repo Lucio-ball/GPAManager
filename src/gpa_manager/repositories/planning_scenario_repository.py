@@ -4,6 +4,7 @@ import sqlite3
 from datetime import datetime
 
 from gpa_manager.common.decimal_utils import to_decimal
+from gpa_manager.common.sqlite_utils import commit_if_needed
 from gpa_manager.models.entities import PlanningScenario
 from gpa_manager.models.enums import ScenarioType
 
@@ -13,6 +14,7 @@ class PlanningScenarioRepository:
         self._connection = connection
 
     def add(self, scenario: PlanningScenario) -> None:
+        was_in_transaction = self._connection.in_transaction
         self._connection.execute(
             """
             INSERT INTO planning_scenarios (
@@ -34,9 +36,10 @@ class PlanningScenarioRepository:
                 scenario.created_at.isoformat(),
             ),
         )
-        self._connection.commit()
+        commit_if_needed(self._connection, was_in_transaction)
 
     def update(self, scenario: PlanningScenario) -> None:
+        was_in_transaction = self._connection.in_transaction
         self._connection.execute(
             """
             UPDATE planning_scenarios
@@ -49,7 +52,7 @@ class PlanningScenarioRepository:
                 scenario.id,
             ),
         )
-        self._connection.commit()
+        commit_if_needed(self._connection, was_in_transaction)
 
     def get(self, scenario_id: str) -> PlanningScenario | None:
         row = self._connection.execute(

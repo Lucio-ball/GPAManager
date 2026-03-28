@@ -4,6 +4,7 @@ import sqlite3
 from datetime import datetime
 
 from gpa_manager.common.decimal_utils import to_decimal
+from gpa_manager.common.sqlite_utils import commit_if_needed
 from gpa_manager.models.entities import ScenarioCourseExpectation
 
 
@@ -12,6 +13,7 @@ class ScenarioCourseExpectationRepository:
         self._connection = connection
 
     def upsert(self, expectation: ScenarioCourseExpectation) -> None:
+        was_in_transaction = self._connection.in_transaction
         self._connection.execute(
             """
             INSERT INTO scenario_course_expectations (
@@ -39,7 +41,7 @@ class ScenarioCourseExpectationRepository:
                 expectation.updated_at.isoformat(),
             ),
         )
-        self._connection.commit()
+        commit_if_needed(self._connection, was_in_transaction)
 
     def get_by_scenario_and_course(self, scenario_id: str, course_id: str) -> ScenarioCourseExpectation | None:
         row = self._connection.execute(

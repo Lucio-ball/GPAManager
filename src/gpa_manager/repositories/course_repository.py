@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 
+from gpa_manager.common.sqlite_utils import commit_if_needed
 from gpa_manager.common.decimal_utils import to_decimal
 from gpa_manager.models.entities import Course
 from gpa_manager.models.enums import CourseStatus, ScoreType
@@ -13,6 +14,7 @@ class CourseRepository:
         self._connection = connection
 
     def add(self, course: Course) -> None:
+        was_in_transaction = self._connection.in_transaction
         self._connection.execute(
             """
             INSERT INTO courses (id, name, semester, credit, status, score_type, note, created_at, updated_at)
@@ -30,9 +32,10 @@ class CourseRepository:
                 course.updated_at.isoformat(),
             ),
         )
-        self._connection.commit()
+        commit_if_needed(self._connection, was_in_transaction)
 
     def update(self, course: Course) -> None:
+        was_in_transaction = self._connection.in_transaction
         self._connection.execute(
             """
             UPDATE courses
@@ -50,11 +53,12 @@ class CourseRepository:
                 course.id,
             ),
         )
-        self._connection.commit()
+        commit_if_needed(self._connection, was_in_transaction)
 
     def delete(self, course_id: str) -> None:
+        was_in_transaction = self._connection.in_transaction
         self._connection.execute("DELETE FROM courses WHERE id = ?", (course_id,))
-        self._connection.commit()
+        commit_if_needed(self._connection, was_in_transaction)
 
     def get(self, course_id: str) -> Course | None:
         row = self._connection.execute("SELECT * FROM courses WHERE id = ?", (course_id,)).fetchone()

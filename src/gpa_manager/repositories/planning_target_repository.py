@@ -4,6 +4,7 @@ import sqlite3
 from datetime import datetime
 
 from gpa_manager.common.decimal_utils import to_decimal
+from gpa_manager.common.sqlite_utils import commit_if_needed
 from gpa_manager.models.entities import PlanningTarget
 
 
@@ -12,6 +13,7 @@ class PlanningTargetRepository:
         self._connection = connection
 
     def add(self, target: PlanningTarget) -> None:
+        was_in_transaction = self._connection.in_transaction
         self._connection.execute(
             """
             INSERT INTO planning_targets (
@@ -35,7 +37,7 @@ class PlanningTargetRepository:
                 target.created_at.isoformat(),
             ),
         )
-        self._connection.commit()
+        commit_if_needed(self._connection, was_in_transaction)
 
     def get(self, target_id: str) -> PlanningTarget | None:
         row = self._connection.execute(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Generic, TypeVar
 
 from gpa_manager.models.enums import CourseStatus, ScenarioType, ScoreType
 
@@ -97,3 +98,82 @@ class PlanningTargetResult:
     feasible: bool | None
     infeasible_reason: str | None
     scenarios: list[PlanningScenarioResult]
+
+
+@dataclass(slots=True)
+class ParsedImportRow:
+    line_number: int
+    raw_line: str
+    fields: dict[str, str]
+
+
+@dataclass(slots=True)
+class ImportErrorDetail:
+    line_number: int
+    identifier: str
+    message: str
+
+
+@dataclass(slots=True)
+class ImportSkippedDetail:
+    line_number: int
+    identifier: str
+    reason: str
+
+
+@dataclass(slots=True)
+class ParsedImportBatch:
+    records: list[ParsedImportRow]
+    errors: list[ImportErrorDetail]
+
+
+@dataclass(slots=True)
+class CourseImportRecord:
+    line_number: int
+    name: str
+    semester: str
+    credit: Decimal
+    status: CourseStatus
+    score_type: ScoreType | None
+    note: str | None
+
+    @property
+    def identifier(self) -> str:
+        return f"{self.name} ({self.semester})"
+
+
+@dataclass(slots=True)
+class ScoreImportRecord:
+    line_number: int
+    course_id: str
+    course_name: str
+    semester: str
+    raw_score: str
+    score_type: ScoreType
+
+    @property
+    def identifier(self) -> str:
+        return f"{self.course_name} ({self.semester})"
+
+
+TImportRecord = TypeVar("TImportRecord")
+
+
+@dataclass(slots=True)
+class ImportValidationResult(Generic[TImportRecord]):
+    valid_records: list[TImportRecord]
+    skipped: list[ImportSkippedDetail]
+    errors: list[ImportErrorDetail]
+
+
+@dataclass(slots=True)
+class ImportReport:
+    import_type: str
+    total_records: int
+    success_count: int
+    failure_count: int
+    skipped_count: int
+    applied: bool
+    imported_identifiers: list[str]
+    skipped: list[ImportSkippedDetail]
+    errors: list[ImportErrorDetail]

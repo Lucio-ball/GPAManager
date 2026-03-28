@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 
+from gpa_manager.common.sqlite_utils import commit_if_needed
 from gpa_manager.common.decimal_utils import to_decimal
 from gpa_manager.models.entities import ScoreRecord
 
@@ -12,6 +13,7 @@ class ScoreRepository:
         self._connection = connection
 
     def upsert(self, score_record: ScoreRecord) -> None:
+        was_in_transaction = self._connection.in_transaction
         self._connection.execute(
             """
             INSERT INTO score_records (course_id, has_score, raw_score, grade_point, calculated_by_rule, updated_at)
@@ -32,11 +34,12 @@ class ScoreRepository:
                 score_record.updated_at.isoformat(),
             ),
         )
-        self._connection.commit()
+        commit_if_needed(self._connection, was_in_transaction)
 
     def delete(self, course_id: str) -> None:
+        was_in_transaction = self._connection.in_transaction
         self._connection.execute("DELETE FROM score_records WHERE course_id = ?", (course_id,))
-        self._connection.commit()
+        commit_if_needed(self._connection, was_in_transaction)
 
     def get_by_course_id(self, course_id: str) -> ScoreRecord | None:
         row = self._connection.execute(

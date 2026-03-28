@@ -3,6 +3,21 @@ export type ScoreType = "PERCENTAGE" | "GRADE";
 export type ScenarioType = "OPTIMISTIC" | "NEUTRAL" | "CONSERVATIVE";
 export type ImportKind = "COURSE" | "SCORE";
 
+export type CourseUpsertPayload = {
+  name: string;
+  semester: string;
+  credit: string;
+  status: CourseStatus;
+  scoreType: ScoreType | null;
+  note: string | null;
+};
+
+export type ScoreUpsertPayload = {
+  courseId: string;
+  rawScore: string;
+  scoreType: ScoreType | null;
+};
+
 export type CourseRecord = {
   id: string;
   name: string;
@@ -23,6 +38,12 @@ export type GpaSummary = {
   qualityPointSum: string;
 };
 
+export type PlanningScenarioExpectation = {
+  courseId: string;
+  rawScore: string;
+  gradePoint: string | null;
+};
+
 export type PlanningScenarioResult = {
   scenarioId: string;
   scenarioType: ScenarioType;
@@ -31,6 +52,7 @@ export type PlanningScenarioResult = {
   coveredPlannedCredit: string;
   isFullCoverage: boolean;
   expectationCount: number;
+  expectations: PlanningScenarioExpectation[];
 };
 
 export type PlanningTargetResult = {
@@ -44,6 +66,23 @@ export type PlanningTargetResult = {
   feasible: boolean | null;
   infeasibleReason: string | null;
   scenarios: PlanningScenarioResult[];
+};
+
+export type PlanningExpectationPayload = {
+  scenarioId: string;
+  courseId: string;
+  rawScore: string | null;
+  scoreType: ScoreType | null;
+};
+
+export type PlanningExpectationSavePayload = {
+  targetId: string;
+  expectations: PlanningExpectationPayload[];
+};
+
+export type CourseDeleteResult = {
+  deleted: boolean;
+  courseId: string;
 };
 
 export type ImportDetail = {

@@ -12,7 +12,12 @@ from typing import Any
 
 from gpa_manager.db.connection import create_connection
 from gpa_manager.db.schema import initialize_database
-from gpa_manager.models.dto import CourseCreateCommand, CourseUpdateCommand, PlanningTargetCreateCommand
+from gpa_manager.models.dto import (
+    CourseCreateCommand,
+    CourseUpdateCommand,
+    PlanningTargetCreateCommand,
+    ScenarioExpectationSaveCommand,
+)
 from gpa_manager.models.enums import CourseStatus, ScoreType
 from gpa_manager.repositories.course_repository import CourseRepository
 from gpa_manager.repositories.planning_scenario_repository import PlanningScenarioRepository
@@ -85,7 +90,7 @@ class DesktopBridgeApp:
             "SELECT id FROM planning_targets ORDER BY created_at DESC LIMIT 1"
         ).fetchone()
         latest_target = (
-            self._planning_service.get_target_result(latest_target_row["id"])
+            self._get_planning_target_payload(latest_target_row["id"])
             if latest_target_row is not None
             else None
         )
@@ -110,7 +115,39 @@ class DesktopBridgeApp:
 
     def create_planning_target(self, payload: dict[str, Any]) -> Any:
         target_gpa = str(payload["targetGpa"])
-        return self._planning_service.create_target(PlanningTargetCreateCommand(target_gpa=target_gpa))
+        target = self._planning_service.create_target(PlanningTargetCreateCommand(target_gpa=target_gpa))
+        return self._get_planning_target_payload(target.target_id)
+
+    def save_planning_expectations(self, payload: dict[str, Any]) -> Any:
+        target_id = str(payload["targetId"])
+        scenario_ids = {
+            scenario.id for scenario in self._planning_scenario_repository.list_by_target_id(target_id)
+        }
+        if not scenario_ids:
+            raise ValueError("Planning target does not exist.")
+
+        for item in payload.get("expectations", []):
+            scenario_id = str(item["scenarioId"])
+            if scenario_id not in scenario_ids:
+                raise ValueError("Scenario does not belong to the current planning target.")
+
+            course_id = str(item["courseId"])
+            raw_score = item.get("rawScore")
+            if raw_score is None or not str(raw_score).strip():
+                self._expectation_repository.delete_by_scenario_and_course(scenario_id, course_id)
+                continue
+
+            score_type_value = item.get("scoreType")
+            self._planning_service.save_scenario_expectation(
+                ScenarioExpectationSaveCommand(
+                    scenario_id=scenario_id,
+                    course_id=course_id,
+                    raw_score=str(raw_score),
+                    score_type=ScoreType(str(score_type_value).upper()) if score_type_value else None,
+                )
+            )
+
+        return self._get_planning_target_payload(target_id)
 
     def run_import(self, payload: dict[str, Any]) -> dict[str, Any]:
         kind = str(payload["kind"]).upper()
@@ -176,7 +213,7 @@ class DesktopBridgeApp:
         raise ValueError(f"Unsupported import kind: {kind}")
 
     def create_course(self, payload: dict[str, Any]) -> Any:
-        return self._course_service.create_course(
+        course = self._course_service.create_course(
             CourseCreateCommand(
                 name=str(payload["name"]),
                 semester=str(payload["semester"]),
@@ -186,9 +223,10 @@ class DesktopBridgeApp:
                 note=payload.get("note"),
             )
         )
+        return self._get_course_view_payload(course.id)
 
     def update_course(self, payload: dict[str, Any]) -> Any:
-        return self._course_service.update_course(
+        course = self._course_service.update_course(
             course_id=str(payload["courseId"]),
             command=CourseUpdateCommand(
                 name=str(payload["name"]),
@@ -199,10 +237,50 @@ class DesktopBridgeApp:
                 note=payload.get("note"),
             ),
         )
+        return self._get_course_view_payload(course.id)
 
     def delete_course(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._course_service.delete_course(str(payload["courseId"]))
-        return {"deleted": True}
+        course_id = str(payload["courseId"])
+        self._course_service.delete_course(course_id)
+        return {"deleted": True, "course_id": course_id}
+
+    def record_score(self, payload: dict[str, Any]) -> Any:
+        score_type_value = payload.get("scoreType")
+        score_record = self._score_service.record_score(
+            course_id=str(payload["courseId"]),
+            raw_score=str(payload["rawScore"]),
+            score_type=ScoreType(str(score_type_value).upper()) if score_type_value else None,
+        )
+        return self._get_course_view_payload(score_record.course_id)
+
+    def clear_score(self, payload: dict[str, Any]) -> Any:
+        score_record = self._score_service.clear_score(str(payload["courseId"]))
+        return self._get_course_view_payload(score_record.course_id)
+
+    def _get_course_view_payload(self, course_id: str) -> Any:
+        course = next((item for item in self._course_service.list_courses() if item.id == course_id), None)
+        if course is None:
+            raise ValueError("Course view not found after mutation.")
+        return course
+
+    def _get_planning_target_payload(self, target_id: str) -> dict[str, Any]:
+        result = asdict(self._planning_service.get_target_result(target_id))
+        expectation_map = {
+            scenario.id: self._expectation_repository.list_by_scenario_id(scenario.id)
+            for scenario in self._planning_scenario_repository.list_by_target_id(target_id)
+        }
+
+        for scenario in result["scenarios"]:
+            scenario["expectations"] = [
+                {
+                    "course_id": expectation.course_id,
+                    "raw_score": expectation.expected_score_raw,
+                    "grade_point": expectation.expected_grade_point,
+                }
+                for expectation in expectation_map.get(scenario["scenario_id"], [])
+            ]
+
+        return result
 
     @staticmethod
     def _resolve_database_path(database_path: str | Path | None) -> Path:
@@ -220,10 +298,13 @@ def dispatch(app: DesktopBridgeApp, command: str, payload: dict[str, Any]) -> An
     commands = {
         "snapshot": lambda: app.snapshot(),
         "planning.create_target": lambda: app.create_planning_target(payload),
+        "planning.save_expectations": lambda: app.save_planning_expectations(payload),
         "import.run": lambda: app.run_import(payload),
         "course.create": lambda: app.create_course(payload),
         "course.update": lambda: app.update_course(payload),
         "course.delete": lambda: app.delete_course(payload),
+        "score.record": lambda: app.record_score(payload),
+        "score.clear": lambda: app.clear_score(payload),
     }
 
     if command not in commands:

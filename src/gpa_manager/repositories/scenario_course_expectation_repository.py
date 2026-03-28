@@ -64,6 +64,17 @@ class ScenarioCourseExpectationRepository:
         ).fetchall()
         return [self._to_entity(row) for row in rows]
 
+    def delete_by_scenario_and_course(self, scenario_id: str, course_id: str) -> None:
+        was_in_transaction = self._connection.in_transaction
+        self._connection.execute(
+            """
+            DELETE FROM scenario_course_expectations
+             WHERE scenario_id = ? AND course_id = ?
+            """,
+            (scenario_id, course_id),
+        )
+        commit_if_needed(self._connection, was_in_transaction)
+
     @staticmethod
     def _to_entity(row: sqlite3.Row) -> ScenarioCourseExpectation:
         return ScenarioCourseExpectation(

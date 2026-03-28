@@ -1,0 +1,81 @@
+export type CourseStatus = "COMPLETED" | "PLANNED";
+export type ScoreType = "PERCENTAGE" | "GRADE";
+export type ScenarioType = "OPTIMISTIC" | "NEUTRAL" | "CONSERVATIVE";
+export type ImportKind = "COURSE" | "SCORE";
+
+export type CourseRecord = {
+  id: string;
+  name: string;
+  semester: string;
+  credit: string;
+  status: CourseStatus;
+  scoreType: ScoreType | null;
+  note: string | null;
+  hasScore: boolean;
+  rawScore: string | null;
+  gradePoint: string | null;
+};
+
+export type GpaSummary = {
+  currentGpa: string | null;
+  countedCreditSum: string;
+  countedCourseCount: number;
+  qualityPointSum: string;
+};
+
+export type PlanningScenarioResult = {
+  scenarioId: string;
+  scenarioType: ScenarioType;
+  simulatedFinalGpa: string | null;
+  requiredFutureAverageGp: string | null;
+  coveredPlannedCredit: string;
+  isFullCoverage: boolean;
+  expectationCount: number;
+};
+
+export type PlanningTargetResult = {
+  targetId: string;
+  targetGpa: string;
+  basedOnCurrentGpa: string;
+  basedOnCompletedCreditSum: string;
+  plannedCreditSum: string;
+  requiredFutureAverageGp: string | null;
+  requiredScoreText: string;
+  feasible: boolean | null;
+  infeasibleReason: string | null;
+  scenarios: PlanningScenarioResult[];
+};
+
+export type ImportDetail = {
+  lineNumber: number;
+  identifier: string;
+  message: string;
+};
+
+export type ImportSkippedDetail = {
+  lineNumber: number;
+  identifier: string;
+  reason: string;
+};
+
+export type ImportWorkbenchResult = {
+  kind: ImportKind;
+  parsedCount: number;
+  validCount: number;
+  skippedCount: number;
+  errorCount: number;
+  applied: boolean;
+  importedIdentifiers: string[];
+  errors: ImportDetail[];
+  skipped: ImportSkippedDetail[];
+};
+
+export type AppSnapshot = {
+  summary: GpaSummary;
+  courses: CourseRecord[];
+  latestPlanning: PlanningTargetResult | null;
+  importTemplates: {
+    courseTextExample: string;
+    scoreTextExample: string;
+  };
+};

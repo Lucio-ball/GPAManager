@@ -101,7 +101,9 @@ export type ImportWorkbenchResult = {
   kind: ImportKind;
   parsedCount: number;
   validCount: number;
+  successCount: number;
   skippedCount: number;
+  failureCount: number;
   errorCount: number;
   applied: boolean;
   importedIdentifiers: string[];

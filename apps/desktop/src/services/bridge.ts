@@ -1,11 +1,47 @@
+type BridgeErrorPayload = {
+  message: string;
+  code?: string;
+  command?: string;
+  details?: unknown;
+};
+
 type BridgeEnvelope<T> = {
   ok: boolean;
   data?: T;
-  error?: string;
+  error?: string | BridgeErrorPayload;
 };
 
 function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function getBridgeErrorMessage(error: BridgeEnvelope<unknown>["error"]) {
+  if (!error) {
+    return "Unknown desktop bridge error.";
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return error.message || "Unknown desktop bridge error.";
+}
+
+function getThrownErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    try {
+      const parsed = JSON.parse(error) as BridgeEnvelope<unknown>;
+      return getBridgeErrorMessage(parsed.error);
+    } catch {
+      return error;
+    }
+  }
+
+  return "Unknown desktop bridge error.";
 }
 
 export async function invokeBridge<T>(
@@ -24,18 +60,12 @@ export async function invokeBridge<T>(
       payload: payload ? JSON.stringify(payload) : null,
     });
     const parsed = JSON.parse(response) as BridgeEnvelope<T>;
-    if (!parsed.ok || parsed.data === undefined) {
-      throw new Error(parsed.error ?? "Unknown desktop bridge error.");
+    if (!parsed.ok) {
+      throw new Error(getBridgeErrorMessage(parsed.error));
     }
 
-    return parsed.data;
+    return parsed.data as T;
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : typeof error === "string"
-          ? error
-          : "Unknown desktop bridge error.";
-    throw new Error(message);
+    throw new Error(getThrownErrorMessage(error));
   }
 }

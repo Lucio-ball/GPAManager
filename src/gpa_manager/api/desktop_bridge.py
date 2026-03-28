@@ -115,7 +115,9 @@ class DesktopBridgeApp:
 
     def create_planning_target(self, payload: dict[str, Any]) -> Any:
         target_gpa = str(payload["targetGpa"])
-        target = self._planning_service.create_target(PlanningTargetCreateCommand(target_gpa=target_gpa))
+        target = self._planning_service.create_target(
+            PlanningTargetCreateCommand(target_gpa=target_gpa)
+        )
         return self._get_planning_target_payload(target.target_id)
 
     def save_planning_expectations(self, payload: dict[str, Any]) -> Any:
@@ -163,7 +165,9 @@ class DesktopBridgeApp:
                     "kind": kind,
                     "parsed_count": len(parsed.records),
                     "valid_count": len(validation.valid_records),
+                    "success_count": report.success_count,
                     "skipped_count": len(report.skipped),
+                    "failure_count": report.failure_count,
                     "error_count": len(report.errors),
                     "applied": report.applied,
                     "imported_identifiers": report.imported_identifiers,
@@ -174,7 +178,9 @@ class DesktopBridgeApp:
                 "kind": kind,
                 "parsed_count": len(parsed.records),
                 "valid_count": len(validation.valid_records),
+                "success_count": 0,
                 "skipped_count": len(validation.skipped),
+                "failure_count": len({(item.line_number, item.identifier) for item in validation.errors}),
                 "error_count": len(validation.errors),
                 "applied": False,
                 "imported_identifiers": [],
@@ -191,7 +197,9 @@ class DesktopBridgeApp:
                     "kind": kind,
                     "parsed_count": len(parsed.records),
                     "valid_count": len(validation.valid_records),
+                    "success_count": report.success_count,
                     "skipped_count": len(report.skipped),
+                    "failure_count": report.failure_count,
                     "error_count": len(report.errors),
                     "applied": report.applied,
                     "imported_identifiers": report.imported_identifiers,
@@ -202,7 +210,9 @@ class DesktopBridgeApp:
                 "kind": kind,
                 "parsed_count": len(parsed.records),
                 "valid_count": len(validation.valid_records),
+                "success_count": 0,
                 "skipped_count": len(validation.skipped),
+                "failure_count": len({(item.line_number, item.identifier) for item in validation.errors}),
                 "error_count": len(validation.errors),
                 "applied": False,
                 "imported_identifiers": [],
@@ -219,7 +229,9 @@ class DesktopBridgeApp:
                 semester=str(payload["semester"]),
                 credit=str(payload["credit"]),
                 status=CourseStatus(str(payload["status"]).upper()),
-                score_type=ScoreType(str(payload["scoreType"]).upper()) if payload.get("scoreType") else None,
+                score_type=ScoreType(str(payload["scoreType"]).upper())
+                if payload.get("scoreType")
+                else None,
                 note=payload.get("note"),
             )
         )
@@ -233,7 +245,9 @@ class DesktopBridgeApp:
                 semester=str(payload["semester"]),
                 credit=str(payload["credit"]),
                 status=CourseStatus(str(payload["status"]).upper()),
-                score_type=ScoreType(str(payload["scoreType"]).upper()) if payload.get("scoreType") else None,
+                score_type=ScoreType(str(payload["scoreType"]).upper())
+                if payload.get("scoreType")
+                else None,
                 note=payload.get("note"),
             ),
         )
@@ -354,7 +368,19 @@ def main() -> None:
             )
         )
     except Exception as exc:  # pragma: no cover - bridge error path
-        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": {
+                        "message": str(exc),
+                        "code": exc.__class__.__name__,
+                        "command": args.command,
+                    },
+                },
+                ensure_ascii=False,
+            )
+        )
         raise SystemExit(1) from exc
     finally:
         app.close()

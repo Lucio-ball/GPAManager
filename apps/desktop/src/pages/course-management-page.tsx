@@ -1,7 +1,17 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { PencilLine, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { useDeferredValue, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  LoaderCircle,
+  PencilLine,
+  Plus,
+  RefreshCw,
+  Save,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 import { CourseStatusBadge, ScoreTypeBadge } from "@/components/shared/course-status-badge";
 import { PageHero } from "@/components/shared/page-hero";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -45,45 +55,67 @@ function validateCourseForm(form: CourseUpsertPayload) {
   if (!form.name.trim()) {
     return "课程名称不能为空。";
   }
+
   if (!/^\d{4}[春夏秋冬]$/u.test(form.semester.trim())) {
     return "学期格式需为 YYYY+春/夏/秋/冬，例如 2026春。";
   }
+
   const credit = Number(form.credit);
   if (!Number.isFinite(credit) || credit <= 0) {
     return "学分必须是大于 0 的数字。";
   }
+
   if (form.status === "COMPLETED" && form.scoreType === null) {
-    return "已修课程建议明确设置成绩类型，便于后续录入真实成绩。";
+    return "已修课程建议明确设置成绩类型，方便后续成绩录入。";
   }
+
   return null;
 }
 
-function filterCourses(courses: CourseRecord[], tab: CourseTab) {
+function matchesCourseTab(course: CourseRecord, tab: CourseTab) {
   if (tab === "completed") {
-    return courses.filter((course) => course.status === "COMPLETED");
+    return course.status === "COMPLETED";
   }
+
   if (tab === "planned") {
-    return courses.filter((course) => course.status === "PLANNED");
+    return course.status === "PLANNED";
   }
-  return courses;
+
+  return true;
+}
+
+function matchesCourseSearch(course: CourseRecord, search: string) {
+  if (!search) {
+    return true;
+  }
+
+  const normalized = search.toLowerCase();
+  return [course.name, course.semester, course.note ?? ""].some((value) =>
+    value.toLowerCase().includes(normalized),
+  );
 }
 
 export function CourseManagementPage() {
-  const { data, isFetching, refetch } = useSnapshotQuery();
+  const snapshotQuery = useSnapshotQuery();
   const createCourseMutation = useCreateCourseMutation();
   const updateCourseMutation = useUpdateCourseMutation();
   const deleteCourseMutation = useDeleteCourseMutation();
 
-  const courses = data?.courses ?? [];
+  const courses = snapshotQuery.data?.courses ?? [];
   const [activeTab, setActiveTab] = useState<CourseTab>("all");
+  const [searchText, setSearchText] = useState("");
   const [editorMode, setEditorMode] = useState<EditorMode>("create");
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [form, setForm] = useState<CourseUpsertPayload>(emptyCourseForm);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const deferredSearch = useDeferredValue(searchText.trim());
   const filteredCourses = useMemo(
-    () => filterCourses(courses, activeTab),
-    [activeTab, courses],
+    () =>
+      courses.filter(
+        (course) => matchesCourseTab(course, activeTab) && matchesCourseSearch(course, deferredSearch),
+      ),
+    [activeTab, courses, deferredSearch],
   );
   const selectedCourse = courses.find((course) => course.id === selectedCourseId) ?? null;
   const isSaving = createCourseMutation.isPending || updateCourseMutation.isPending;
@@ -117,15 +149,14 @@ export function CourseManagementPage() {
 
     setFormError(null);
 
+    const payload: CourseUpsertPayload = {
+      ...form,
+      note: form.note?.trim() ? form.note.trim() : null,
+    };
+
     if (editorMode === "edit" && selectedCourseId) {
       updateCourseMutation.mutate(
-        {
-          courseId: selectedCourseId,
-          payload: {
-            ...form,
-            note: form.note?.trim() ? form.note.trim() : null,
-          },
-        },
+        { courseId: selectedCourseId, payload },
         {
           onSuccess: (course) => {
             setSelectedCourseId(course.id);
@@ -140,22 +171,16 @@ export function CourseManagementPage() {
       return;
     }
 
-    createCourseMutation.mutate(
-      {
-        ...form,
-        note: form.note?.trim() ? form.note.trim() : null,
+    createCourseMutation.mutate(payload, {
+      onSuccess: (course) => {
+        setSelectedCourseId(course.id);
+        setEditorMode("edit");
+        setForm(toCourseForm(course));
       },
-      {
-        onSuccess: (course) => {
-          setSelectedCourseId(course.id);
-          setEditorMode("edit");
-          setForm(toCourseForm(course));
-        },
-        onError: (error) => {
-          setFormError(error instanceof Error ? error.message : "新增课程失败。");
-        },
+      onError: (error) => {
+        setFormError(error instanceof Error ? error.message : "新建课程失败。");
       },
-    );
+    });
   };
 
   const handleDelete = () => {
@@ -177,14 +202,15 @@ export function CourseManagementPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHero
-        eyebrow="Course Information Architecture"
-        title="课程主数据在这里进入可写状态，新增、编辑、删除和刷新共用一套清晰工作台。"
-        description="列表负责快速扫描，右侧表单负责落地操作。课程一旦变更，成绩页、规划页和首页 GPA 快照都会跟着更新。"
+        eyebrow="Course Workspace"
+        title="课程主数据已经进入完整编辑态，支持搜索、状态筛选、增删改和快照同步刷新。"
+        description="列表区域现在强调“筛选和操作”，编辑区域强调“当前选中课程”和表单保存。课程一旦变更，成绩页、规划页和首页 summary 都会联动刷新。"
         actions={
           <>
-            <Button variant="secondary" onClick={() => void refetch()} disabled={isFetching}>
-              <RefreshCw data-icon="inline-start" className={isFetching ? "animate-spin" : ""} />
-              {isFetching ? "刷新中" : "刷新列表"}
+            <Badge variant="outline">搜索 + 已修/未修筛选</Badge>
+            <Button variant="secondary" onClick={() => void snapshotQuery.refetch()} disabled={snapshotQuery.isFetching}>
+              <RefreshCw data-icon="inline-start" className={snapshotQuery.isFetching ? "animate-spin" : ""} />
+              {snapshotQuery.isFetching ? "刷新中..." : "刷新列表"}
             </Button>
             <Button onClick={handleCreateNew}>
               <Plus data-icon="inline-start" />
@@ -208,21 +234,73 @@ export function CourseManagementPage() {
         <TabsContent value={activeTab}>
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_420px]">
             <Card>
-              <CardHeader className="gap-3">
-                <div className="flex items-center justify-between gap-3">
+              <CardHeader className="gap-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <div>
-                    <CardTitle>课程主列表</CardTitle>
+                    <CardTitle>课程列表</CardTitle>
                     <CardDescription>
-                      点击任意行即可进入编辑模式。课程状态与成绩占位会直接决定后续录入和规划是否可用。
+                      支持按名称、学期和备注搜索。右侧操作列可以直接进入编辑，避免只靠整行点击。
                     </CardDescription>
                   </div>
                   <div className="rounded-full border border-white/8 bg-white/[0.04] px-3 py-1 text-xs text-muted-foreground">
-                    当前 {filteredCourses.length} 门
+                    当前结果 {filteredCourses.length} / {courses.length}
                   </div>
+                </div>
+
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <div className="relative flex-1">
+                    <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={searchText}
+                      onChange={(event) => setSearchText(event.target.value)}
+                      placeholder="搜索课程名称、学期或备注"
+                      className="pl-11"
+                    />
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => setSearchText("")}
+                    disabled={!searchText}
+                  >
+                    <X data-icon="inline-start" />
+                    清空搜索
+                  </Button>
                 </div>
               </CardHeader>
               <CardContent>
-                {filteredCourses.length ? (
+                {snapshotQuery.isLoading ? (
+                  <StatePanel tone="neutral">
+                    <LoaderCircle className="size-4 animate-spin" />
+                    正在加载课程列表...
+                  </StatePanel>
+                ) : snapshotQuery.isError ? (
+                  <StatePanel tone="error">
+                    <div>
+                      <div className="font-medium text-foreground">课程列表加载失败</div>
+                      <div className="mt-1 text-sm leading-6 text-foreground/76">
+                        {snapshotQuery.error instanceof Error
+                          ? snapshotQuery.error.message
+                          : "请检查 bridge 或本地数据库后重试。"}
+                      </div>
+                    </div>
+                    <Button variant="secondary" onClick={() => void snapshotQuery.refetch()}>
+                      重试
+                    </Button>
+                  </StatePanel>
+                ) : !courses.length ? (
+                  <StatePanel tone="neutral">
+                    <div>
+                      <div className="font-medium text-foreground">还没有课程数据</div>
+                      <div className="mt-1 text-sm leading-6 text-muted-foreground">
+                        可以先在右侧创建课程，或者去批量导入页导入课程清单。
+                      </div>
+                    </div>
+                    <Button onClick={handleCreateNew}>
+                      <Plus data-icon="inline-start" />
+                      创建第一门课程
+                    </Button>
+                  </StatePanel>
+                ) : filteredCourses.length ? (
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -233,6 +311,7 @@ export function CourseManagementPage() {
                         <TableHead>成绩类型</TableHead>
                         <TableHead>原始成绩</TableHead>
                         <TableHead>绩点</TableHead>
+                        <TableHead className="w-[120px]">操作</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -242,8 +321,7 @@ export function CourseManagementPage() {
                         return (
                           <TableRow
                             key={course.id}
-                            className={isActive ? "bg-white/[0.05]" : "cursor-pointer"}
-                            onClick={() => handleSelectCourse(course)}
+                            className={isActive ? "bg-white/[0.05]" : ""}
                           >
                             <TableCell>
                               <div className="font-medium text-foreground">{course.name}</div>
@@ -259,15 +337,40 @@ export function CourseManagementPage() {
                             <TableCell>
                               <ScoreTypeBadge scoreType={course.scoreType} />
                             </TableCell>
-                            <TableCell>{course.rawScore ?? "未录入"}</TableCell>
+                            <TableCell>{course.rawScore ?? "--"}</TableCell>
                             <TableCell>{formatDecimal(course.gradePoint, 3, "--")}</TableCell>
+                            <TableCell>
+                              <Button
+                                size="sm"
+                                variant={isActive ? "default" : "secondary"}
+                                onClick={() => handleSelectCourse(course)}
+                              >
+                                编辑
+                              </Button>
+                            </TableCell>
                           </TableRow>
                         );
                       })}
                     </TableBody>
                   </Table>
                 ) : (
-                  <EmptyHint>当前筛选下还没有课程，先在右侧工作台创建第一门课程。</EmptyHint>
+                  <StatePanel tone="neutral">
+                    <div>
+                      <div className="font-medium text-foreground">当前筛选下没有课程</div>
+                      <div className="mt-1 text-sm leading-6 text-muted-foreground">
+                        可以清空搜索词，或者切换到其他状态筛选。
+                      </div>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setSearchText("");
+                        setActiveTab("all");
+                      }}
+                    >
+                      清空筛选
+                    </Button>
+                  </StatePanel>
                 )}
               </CardContent>
             </Card>
@@ -280,22 +383,33 @@ export function CourseManagementPage() {
                     <CardTitle>{editorMode === "create" ? "新增课程" : "编辑课程"}</CardTitle>
                     <CardDescription>
                       {editorMode === "create"
-                        ? "先补齐课程主数据，再进入成绩和规划两个闭环。"
-                        : "编辑后会立即影响成绩录入入口和规划页的未修课程矩阵。"}
+                        ? "先补齐课程主数据，再进入成绩和规划闭环。"
+                        : "保存后会立即影响成绩录入、规划计算和首页快照。"}
                     </CardDescription>
                   </div>
-                  <div className="rounded-full border border-white/8 bg-white/[0.04] px-3 py-1 text-xs text-muted-foreground">
-                    {editorMode === "create" ? "CREATE" : "EDIT"}
-                  </div>
+                  <Badge variant="secondary">{editorMode === "create" ? "CREATE" : "EDIT"}</Badge>
                 </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
-                {formError ? <ErrorNotice>{formError}</ErrorNotice> : null}
+                {formError ? <Notice tone="error">{formError}</Notice> : null}
+
+                {selectedCourse ? (
+                  <div className="rounded-[24px] border border-white/8 bg-white/[0.04] p-4">
+                    <div className="text-sm font-semibold text-foreground">{selectedCourse.name}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{selectedCourse.semester}</div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <CourseStatusBadge status={selectedCourse.status} />
+                      <ScoreTypeBadge scoreType={selectedCourse.scoreType} />
+                    </div>
+                  </div>
+                ) : (
+                  <Notice tone="neutral">当前是新建模式，保存后会自动进入该课程的编辑态。</Notice>
+                )}
 
                 {selectedCourse?.hasScore ? (
-                  <InfoNotice>
-                    当前课程已录入真实成绩。如果要改成“未修”，请先去成绩页清空成绩。
-                  </InfoNotice>
+                  <Notice tone="warning">
+                    当前课程已经录入真实成绩。如果要改回“未修”，请先到成绩页清空成绩。
+                  </Notice>
                 ) : null}
 
                 <Field label="课程名称">
@@ -316,6 +430,7 @@ export function CourseManagementPage() {
                       placeholder="例如：2026春"
                     />
                   </Field>
+
                   <Field label="学分">
                     <Input
                       value={form.credit}
@@ -371,17 +486,16 @@ export function CourseManagementPage() {
 
                 <div className="grid gap-3 pt-2 sm:grid-cols-2">
                   <Button onClick={handleSubmit} disabled={isSaving}>
-                    {editorMode === "create" ? (
+                    {isSaving ? (
+                      <LoaderCircle data-icon="inline-start" className="animate-spin" />
+                    ) : editorMode === "create" ? (
                       <Plus data-icon="inline-start" />
                     ) : (
                       <Save data-icon="inline-start" />
                     )}
-                    {isSaving
-                      ? "保存中..."
-                      : editorMode === "create"
-                        ? "创建课程"
-                        : "保存修改"}
+                    {isSaving ? "保存中..." : editorMode === "create" ? "创建课程" : "保存修改"}
                   </Button>
+
                   <Button variant="secondary" onClick={handleCreateNew} disabled={isSaving}>
                     <PencilLine data-icon="inline-start" />
                     新建空白表单
@@ -394,7 +508,11 @@ export function CourseManagementPage() {
                   disabled={editorMode !== "edit" || !selectedCourseId || deleteCourseMutation.isPending}
                   className="border-red-400/18 text-red-200 hover:bg-red-400/10 hover:text-red-100"
                 >
-                  <Trash2 data-icon="inline-start" />
+                  {deleteCourseMutation.isPending ? (
+                    <LoaderCircle data-icon="inline-start" className="animate-spin" />
+                  ) : (
+                    <Trash2 data-icon="inline-start" />
+                  )}
                   {deleteCourseMutation.isPending ? "删除中..." : "删除当前课程"}
                 </Button>
               </CardContent>
@@ -406,13 +524,7 @@ export function CourseManagementPage() {
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="flex flex-col gap-2">
       <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
@@ -423,26 +535,38 @@ function Field({
   );
 }
 
-function EmptyHint({ children }: { children: ReactNode }) {
+function StatePanel({
+  tone,
+  children,
+}: {
+  tone: "neutral" | "error";
+  children: ReactNode;
+}) {
+  const className =
+    tone === "error"
+      ? "border border-red-400/18 bg-red-400/10 text-red-100"
+      : "border border-white/8 bg-white/[0.03] text-muted-foreground";
+
   return (
-    <div className="rounded-[24px] border border-dashed border-white/10 bg-white/[0.02] px-5 py-6 text-sm leading-6 text-muted-foreground">
+    <div className={`flex flex-col gap-4 rounded-[24px] px-5 py-6 text-sm leading-6 ${className}`}>
       {children}
     </div>
   );
 }
 
-function ErrorNotice({ children }: { children: ReactNode }) {
-  return (
-    <div className="rounded-[22px] border border-red-400/18 bg-red-400/10 px-4 py-3 text-sm leading-6 text-red-100">
-      {children}
-    </div>
-  );
-}
+function Notice({
+  tone,
+  children,
+}: {
+  tone: "error" | "warning" | "neutral";
+  children: ReactNode;
+}) {
+  const className =
+    tone === "error"
+      ? "border border-red-400/18 bg-red-400/10 text-red-100"
+      : tone === "warning"
+        ? "border border-amber-400/18 bg-amber-400/10 text-amber-100"
+        : "border border-white/8 bg-white/[0.03] text-muted-foreground";
 
-function InfoNotice({ children }: { children: ReactNode }) {
-  return (
-    <div className="rounded-[22px] border border-amber-400/18 bg-amber-400/10 px-4 py-3 text-sm leading-6 text-amber-100">
-      {children}
-    </div>
-  );
+  return <div className={`rounded-[22px] px-4 py-3 text-sm leading-6 ${className}`}>{children}</div>;
 }

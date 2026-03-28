@@ -39,11 +39,26 @@ fn desktop_bridge(command: String, payload: Option<String>) -> Result<String, St
         .output()
         .map_err(|error| format!("Failed to run Python bridge: {error}"))?;
 
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        if !stdout.is_empty() {
+            return Ok(stdout);
+        }
+
+        return Err(if stderr.is_empty() {
+            "Python bridge exited with a non-zero status.".to_string()
+        } else {
+            stderr
+        });
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    if stdout.is_empty() {
+        return Err("Python bridge returned no output.".to_string());
+    }
+
+    Ok(stdout)
 }
 
 fn main() {

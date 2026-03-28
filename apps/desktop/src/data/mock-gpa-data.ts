@@ -570,29 +570,29 @@ function buildMockImportResult(kind: ImportKind, text: string, applied: boolean)
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
-  const invalidLine = lines.find((line) => !line.includes("="));
-  const errorCount = invalidLine ? 1 : 0;
-  const invalidIdentifier = invalidLine ?? "";
+  const errors = lines
+    .map((line, index) => ({ line, lineNumber: index + 1 }))
+    .filter(({ line }) => !line.includes("="))
+    .map(({ line, lineNumber }) => ({
+      lineNumber,
+      identifier: line,
+      message: "Malformed segment. Each field must use key=value.",
+    }));
+  const errorCount = errors.length;
+  const importedIdentifiers = applied && errorCount === 0 ? lines.slice(0, 5) : [];
 
   return {
     kind,
     parsedCount: lines.length,
     validCount: Math.max(lines.length - errorCount, 0),
+    successCount: importedIdentifiers.length,
     skippedCount: 0,
+    failureCount: errorCount,
     errorCount,
     applied: applied && errorCount === 0,
-    importedIdentifiers: applied && errorCount === 0 ? lines.slice(0, 3) : [],
+    importedIdentifiers,
     skipped: [],
-    errors:
-      errorCount === 0
-        ? []
-        : [
-            {
-              lineNumber: lines.indexOf(invalidIdentifier) + 1,
-              identifier: invalidIdentifier,
-              message: "Malformed segment. Each field must use key=value.",
-            },
-          ],
+    errors,
   };
 }
 

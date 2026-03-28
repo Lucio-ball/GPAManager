@@ -154,7 +154,7 @@ export function useImportMutation() {
       if (variables.apply && result.applied) {
         feedback.success(
           "\u5bfc\u5165\u5df2\u5b8c\u6210",
-          `\u5df2\u6210\u529f\u5bfc\u5165 ${result.importedIdentifiers.length} \u6761\u8bb0\u5f55\u3002`,
+          `\u5df2\u6210\u529f\u5bfc\u5165 ${result.successCount} \u6761\u8bb0\u5f55\u3002`,
         );
         await queryClient.invalidateQueries({ queryKey: queryKeys.snapshot });
       }

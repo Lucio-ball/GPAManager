@@ -28,6 +28,40 @@ def initialize_database(connection: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL,
             FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE
         );
+
+        CREATE TABLE IF NOT EXISTS planning_targets (
+            id TEXT PRIMARY KEY,
+            target_gpa TEXT NOT NULL,
+            based_on_current_gpa TEXT NOT NULL,
+            based_on_completed_credit_sum TEXT NOT NULL,
+            feasible INTEGER NULL CHECK (feasible IN (0, 1)),
+            infeasible_reason TEXT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS planning_scenarios (
+            id TEXT PRIMARY KEY,
+            target_id TEXT NOT NULL,
+            scenario_type TEXT NOT NULL CHECK (scenario_type IN ('OPTIMISTIC', 'NEUTRAL', 'CONSERVATIVE')),
+            simulated_final_gpa TEXT NULL,
+            required_future_average_gp TEXT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(target_id) REFERENCES planning_targets(id) ON DELETE CASCADE,
+            UNIQUE(target_id, scenario_type)
+        );
+
+        CREATE TABLE IF NOT EXISTS scenario_course_expectations (
+            id TEXT PRIMARY KEY,
+            scenario_id TEXT NOT NULL,
+            course_id TEXT NOT NULL,
+            expected_score_raw TEXT NULL,
+            expected_grade_point TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(scenario_id) REFERENCES planning_scenarios(id) ON DELETE CASCADE,
+            FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            UNIQUE(scenario_id, course_id)
+        );
         """
     )
     connection.commit()

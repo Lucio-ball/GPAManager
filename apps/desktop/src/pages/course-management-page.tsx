@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   LoaderCircle,
   PencilLine,
@@ -8,10 +8,13 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { useAppPreferences } from "@/components/shared/app-preferences";
 import { AsyncButton } from "@/components/shared/async-button";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { CourseStatusBadge, ScoreTypeBadge } from "@/components/shared/course-status-badge";
 import { PageHero } from "@/components/shared/page-hero";
+import { SortHeader, type SortDirection } from "@/components/shared/sort-header";
 import { InlineMessage, StatePanel } from "@/components/shared/status-message";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,15 +35,57 @@ import type { CourseRecord, CourseStatus, CourseUpsertPayload, ScoreType } from 
 
 type CourseTab = "all" | "completed" | "planned";
 type EditorMode = "create" | "edit";
+type CourseSortKey =
+  | "name"
+  | "semester"
+  | "credit"
+  | "status"
+  | "scoreType"
+  | "rawScore"
+  | "gradePoint";
+type CourseField = "name" | "semester" | "credit";
 
-const emptyCourseForm: CourseUpsertPayload = {
-  name: "",
-  semester: "",
-  credit: "",
-  status: "PLANNED",
-  scoreType: "PERCENTAGE",
-  note: "",
+const emptyTouchedState: Record<CourseField, boolean> = {
+  name: false,
+  semester: false,
+  credit: false,
 };
+
+function normalizeCourseTab(value: string | null): CourseTab {
+  if (value === "completed" || value === "planned") {
+    return value;
+  }
+  return "all";
+}
+
+function createDefaultCourseForm(
+  defaultSemester: string,
+  defaultCourseStatus: CourseStatus,
+  defaultScoreType: ScoreType,
+): CourseUpsertPayload {
+  return {
+    name: "",
+    semester: defaultSemester,
+    credit: "",
+    status: defaultCourseStatus,
+    scoreType: defaultScoreType,
+    note: "",
+  };
+}
+
+function buildContinuousCreateForm(
+  form: CourseUpsertPayload,
+  defaultSemester: string,
+  defaultCourseStatus: CourseStatus,
+  defaultScoreType: ScoreType,
+): CourseUpsertPayload {
+  return {
+    ...createDefaultCourseForm(defaultSemester, defaultCourseStatus, defaultScoreType),
+    semester: form.semester.trim() || defaultSemester,
+    status: form.status,
+    scoreType: form.scoreType ?? defaultScoreType,
+  };
+}
 
 function toCourseForm(course: CourseRecord): CourseUpsertPayload {
   return {
@@ -53,24 +98,33 @@ function toCourseForm(course: CourseRecord): CourseUpsertPayload {
   };
 }
 
-function validateCourseForm(form: CourseUpsertPayload) {
-  if (!form.name.trim()) {
-    return "课程名称不能为空。";
-  }
+function getCourseFieldErrors(form: CourseUpsertPayload) {
+  return {
+    name: form.name.trim() ? null : "课程名称不能为空。",
+    semester: /^\d{4}[春夏秋冬]$/u.test(form.semester.trim())
+      ? null
+      : "学期格式需为 YYYY+春/夏/秋/冬，例如 2026春。",
+    credit:
+      Number.isFinite(Number(form.credit)) && Number(form.credit) > 0
+        ? null
+        : "学分必须是大于 0 的数字。",
+  } satisfies Record<CourseField, string | null>;
+}
 
-  if (!/^\d{4}[春夏秋冬]$/u.test(form.semester.trim())) {
-    return "学期格式需为 YYYY+春/夏/秋/冬，例如 2026春。";
+function getCourseFormError(form: CourseUpsertPayload) {
+  const fieldErrors = getCourseFieldErrors(form);
+  if (fieldErrors.name) {
+    return fieldErrors.name;
   }
-
-  const credit = Number(form.credit);
-  if (!Number.isFinite(credit) || credit <= 0) {
-    return "学分必须是大于 0 的数字。";
+  if (fieldErrors.semester) {
+    return fieldErrors.semester;
   }
-
+  if (fieldErrors.credit) {
+    return fieldErrors.credit;
+  }
   if (form.status === "COMPLETED" && form.scoreType === null) {
     return "已修课程建议明确设置成绩类型，方便后续成绩录入。";
   }
-
   return null;
 }
 
@@ -78,11 +132,9 @@ function matchesCourseTab(course: CourseRecord, tab: CourseTab) {
   if (tab === "completed") {
     return course.status === "COMPLETED";
   }
-
   if (tab === "planned") {
     return course.status === "PLANNED";
   }
-
   return true;
 }
 
@@ -97,28 +149,97 @@ function matchesCourseSearch(course: CourseRecord, search: string) {
   );
 }
 
+function compareNullableText(left: string | null | undefined, right: string | null | undefined) {
+  return (left ?? "").localeCompare(right ?? "", "zh-Hans-CN");
+}
+
+function compareNullableNumber(left: string | null | undefined, right: string | null | undefined) {
+  const leftValue = left === null || left === undefined || left === "" ? Number.NEGATIVE_INFINITY : Number(left);
+  const rightValue =
+    right === null || right === undefined || right === "" ? Number.NEGATIVE_INFINITY : Number(right);
+  return leftValue - rightValue;
+}
+
+function sortCourses(
+  courses: CourseRecord[],
+  key: CourseSortKey,
+  direction: SortDirection,
+) {
+  const statusRank: Record<CourseStatus, number> = {
+    PLANNED: 0,
+    COMPLETED: 1,
+  };
+
+  const ordered = [...courses].sort((left, right) => {
+    const result =
+      key === "name"
+        ? left.name.localeCompare(right.name, "zh-Hans-CN")
+        : key === "semester"
+          ? left.semester.localeCompare(right.semester, "zh-Hans-CN")
+          : key === "credit"
+            ? Number(left.credit) - Number(right.credit)
+            : key === "status"
+              ? statusRank[left.status] - statusRank[right.status]
+              : key === "scoreType"
+                ? compareNullableText(left.scoreType, right.scoreType)
+                : key === "rawScore"
+                  ? compareNullableText(left.rawScore, right.rawScore)
+                  : compareNullableNumber(left.gradePoint, right.gradePoint);
+
+    if (result !== 0) {
+      return direction === "asc" ? result : -result;
+    }
+
+    return (
+      right.semester.localeCompare(left.semester, "zh-Hans-CN") ||
+      left.name.localeCompare(right.name, "zh-Hans-CN")
+    );
+  });
+
+  return ordered;
+}
+
 export function CourseManagementPage() {
+  const [searchParams] = useSearchParams();
+  const { preferences } = useAppPreferences();
   const snapshotQuery = useSnapshotQuery();
   const createCourseMutation = useCreateCourseMutation();
   const updateCourseMutation = useUpdateCourseMutation();
   const deleteCourseMutation = useDeleteCourseMutation();
 
   const courses = snapshotQuery.data?.courses ?? [];
-  const [activeTab, setActiveTab] = useState<CourseTab>("all");
+  const [activeTab, setActiveTab] = useState<CourseTab>(() =>
+    normalizeCourseTab(searchParams.get("tab")),
+  );
   const [searchText, setSearchText] = useState("");
   const [editorMode, setEditorMode] = useState<EditorMode>("create");
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
-  const [form, setForm] = useState<CourseUpsertPayload>(emptyCourseForm);
+  const [sortKey, setSortKey] = useState<CourseSortKey>("semester");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [form, setForm] = useState<CourseUpsertPayload>(() =>
+    createDefaultCourseForm(
+      preferences.defaultSemester,
+      preferences.defaultCourseStatus,
+      preferences.defaultScoreType,
+    ),
+  );
+  const [touchedFields, setTouchedFields] = useState<Record<CourseField, boolean>>(emptyTouchedState);
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const deferredSearch = useDeferredValue(searchText.trim());
+  const fieldErrors = useMemo(() => getCourseFieldErrors(form), [form]);
   const filteredCourses = useMemo(
     () =>
-      courses.filter(
-        (course) => matchesCourseTab(course, activeTab) && matchesCourseSearch(course, deferredSearch),
+      sortCourses(
+        courses.filter(
+          (course) => matchesCourseTab(course, activeTab) && matchesCourseSearch(course, deferredSearch),
+        ),
+        sortKey,
+        sortDirection,
       ),
-    [activeTab, courses, deferredSearch],
+    [activeTab, courses, deferredSearch, sortDirection, sortKey],
   );
   const selectedCourse = courses.find((course) => course.id === selectedCourseId) ?? null;
   const isSaving = createCourseMutation.isPending || updateCourseMutation.isPending;
@@ -129,23 +250,53 @@ export function CourseManagementPage() {
     }
   }, [courses, selectedCourseId]);
 
-  const handleCreateNew = () => {
+  useEffect(() => {
+    if (editorMode === "create") {
+      window.requestAnimationFrame(() => nameInputRef.current?.focus());
+    }
+  }, [editorMode]);
+
+  function handleCreateNew(nextForm?: CourseUpsertPayload) {
     setEditorMode("create");
     setSelectedCourseId(null);
-    setForm(emptyCourseForm);
+    setForm(
+      nextForm ??
+        createDefaultCourseForm(
+          preferences.defaultSemester,
+          preferences.defaultCourseStatus,
+          preferences.defaultScoreType,
+        ),
+    );
+    setTouchedFields(emptyTouchedState);
     setFormError(null);
-  };
+  }
 
-  const handleSelectCourse = (course: CourseRecord) => {
+  function handleSelectCourse(course: CourseRecord) {
     setEditorMode("edit");
     setSelectedCourseId(course.id);
     setForm(toCourseForm(course));
+    setTouchedFields(emptyTouchedState);
     setFormError(null);
-  };
+  }
 
-  const handleSubmit = () => {
-    const validationError = validateCourseForm(form);
+  function handleToggleSort(key: CourseSortKey) {
+    if (sortKey === key) {
+      setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+
+    setSortKey(key);
+    setSortDirection(key === "name" ? "asc" : "desc");
+  }
+
+  function handleSubmit(mode: "default" | "continue") {
+    const validationError = getCourseFormError(form);
     if (validationError) {
+      setTouchedFields({
+        name: true,
+        semester: true,
+        credit: true,
+      });
       setFormError(validationError);
       return;
     }
@@ -165,6 +316,7 @@ export function CourseManagementPage() {
             setSelectedCourseId(course.id);
             setEditorMode("edit");
             setForm(toCourseForm(course));
+            setTouchedFields(emptyTouchedState);
           },
           onError: (error) => {
             setFormError(error instanceof Error ? error.message : "编辑课程失败。");
@@ -176,17 +328,30 @@ export function CourseManagementPage() {
 
     createCourseMutation.mutate(payload, {
       onSuccess: (course) => {
+        if (mode === "continue") {
+          handleCreateNew(
+            buildContinuousCreateForm(
+              payload,
+              preferences.defaultSemester,
+              preferences.defaultCourseStatus,
+              preferences.defaultScoreType,
+            ),
+          );
+          return;
+        }
+
         setSelectedCourseId(course.id);
         setEditorMode("edit");
         setForm(toCourseForm(course));
+        setTouchedFields(emptyTouchedState);
       },
       onError: (error) => {
         setFormError(error instanceof Error ? error.message : "新建课程失败。");
       },
     });
-  };
+  }
 
-  const handleDelete = () => {
+  function handleDelete() {
     if (!selectedCourseId) {
       return;
     }
@@ -201,22 +366,30 @@ export function CourseManagementPage() {
         setFormError(error instanceof Error ? error.message : "删除课程失败。");
       },
     });
-  };
+  }
+
+  const plannedCount = courses.filter((course) => course.status === "PLANNED").length;
+  const completedCount = courses.filter((course) => course.status === "COMPLETED").length;
 
   return (
     <div className="flex flex-col gap-6">
       <PageHero
         eyebrow="Course Workspace"
-        title="课程主数据已经进入完整编辑态，支持搜索、状态筛选、增删改和快照同步刷新。"
-        description="列表区域现在强调“筛选和操作”，编辑区域强调“当前选中课程”和表单保存。课程一旦变更，成绩页、规划页和首页 summary 都会联动刷新。"
+        title="课程主数据现在更像日常工作台：支持排序、默认值、连续录入和更稳的删除保护。"
+        description="列表区域优先解决“找得快”，编辑区域优先解决“录得顺”。课程一旦变更，成绩页、规划页和首页 summary 都会联动刷新。"
         actions={
           <>
-            <Badge variant="outline">搜索 + 已修/未修筛选</Badge>
-            <Button variant="secondary" onClick={() => void snapshotQuery.refetch()} disabled={snapshotQuery.isFetching}>
+            <Badge variant="outline">排序 + 搜索 + 状态筛选</Badge>
+            <Badge variant="secondary">默认学期 {preferences.defaultSemester}</Badge>
+            <Button
+              variant="secondary"
+              onClick={() => void snapshotQuery.refetch()}
+              disabled={snapshotQuery.isFetching}
+            >
               <RefreshCw data-icon="inline-start" className={snapshotQuery.isFetching ? "animate-spin" : ""} />
               {snapshotQuery.isFetching ? "刷新中..." : "刷新列表"}
             </Button>
-            <Button onClick={handleCreateNew}>
+            <Button onClick={() => handleCreateNew()}>
               <Plus data-icon="inline-start" />
               新增课程
             </Button>
@@ -227,12 +400,8 @@ export function CourseManagementPage() {
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as CourseTab)}>
         <TabsList>
           <TabsTrigger value="all">全部课程 {courses.length}</TabsTrigger>
-          <TabsTrigger value="completed">
-            已修 {courses.filter((course) => course.status === "COMPLETED").length}
-          </TabsTrigger>
-          <TabsTrigger value="planned">
-            未修 {courses.filter((course) => course.status === "PLANNED").length}
-          </TabsTrigger>
+          <TabsTrigger value="completed">已修 {completedCount}</TabsTrigger>
+          <TabsTrigger value="planned">未修 {plannedCount}</TabsTrigger>
         </TabsList>
 
         <TabsContent value={activeTab}>
@@ -243,7 +412,7 @@ export function CourseManagementPage() {
                   <div>
                     <CardTitle>课程列表</CardTitle>
                     <CardDescription>
-                      支持按名称、学期和备注搜索。右侧操作列可以直接进入编辑，避免只靠整行点击。
+                      支持按名称、学期和备注搜索，也支持按学期、学分、状态等常用字段排序。
                     </CardDescription>
                   </div>
                   <div className="rounded-full border border-white/8 bg-white/[0.04] px-3 py-1 text-xs text-muted-foreground">
@@ -261,11 +430,7 @@ export function CourseManagementPage() {
                       className="pl-11"
                     />
                   </div>
-                  <Button
-                    variant="outline"
-                    onClick={() => setSearchText("")}
-                    disabled={!searchText}
-                  >
+                  <Button variant="outline" onClick={() => setSearchText("")} disabled={!searchText}>
                     <X data-icon="inline-start" />
                     清空搜索
                   </Button>
@@ -299,7 +464,7 @@ export function CourseManagementPage() {
                         可以先在右侧创建课程，或者去批量导入页导入课程清单。
                       </div>
                     </div>
-                    <Button onClick={handleCreateNew}>
+                    <Button onClick={() => handleCreateNew()}>
                       <Plus data-icon="inline-start" />
                       创建第一门课程
                     </Button>
@@ -308,13 +473,48 @@ export function CourseManagementPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>课程</TableHead>
-                        <TableHead>学期</TableHead>
-                        <TableHead>学分</TableHead>
-                        <TableHead>状态</TableHead>
-                        <TableHead>成绩类型</TableHead>
-                        <TableHead>原始成绩</TableHead>
-                        <TableHead>绩点</TableHead>
+                        <SortHeader
+                          label="课程"
+                          active={sortKey === "name"}
+                          direction={sortDirection}
+                          onToggle={() => handleToggleSort("name")}
+                        />
+                        <SortHeader
+                          label="学期"
+                          active={sortKey === "semester"}
+                          direction={sortDirection}
+                          onToggle={() => handleToggleSort("semester")}
+                        />
+                        <SortHeader
+                          label="学分"
+                          active={sortKey === "credit"}
+                          direction={sortDirection}
+                          onToggle={() => handleToggleSort("credit")}
+                        />
+                        <SortHeader
+                          label="状态"
+                          active={sortKey === "status"}
+                          direction={sortDirection}
+                          onToggle={() => handleToggleSort("status")}
+                        />
+                        <SortHeader
+                          label="成绩类型"
+                          active={sortKey === "scoreType"}
+                          direction={sortDirection}
+                          onToggle={() => handleToggleSort("scoreType")}
+                        />
+                        <SortHeader
+                          label="原始成绩"
+                          active={sortKey === "rawScore"}
+                          direction={sortDirection}
+                          onToggle={() => handleToggleSort("rawScore")}
+                        />
+                        <SortHeader
+                          label="绩点"
+                          active={sortKey === "gradePoint"}
+                          direction={sortDirection}
+                          onToggle={() => handleToggleSort("gradePoint")}
+                        />
                         <TableHead className="w-[120px]">操作</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -323,10 +523,7 @@ export function CourseManagementPage() {
                         const isActive = selectedCourseId === course.id;
 
                         return (
-                          <TableRow
-                            key={course.id}
-                            className={isActive ? "bg-white/[0.05]" : ""}
-                          >
+                          <TableRow key={course.id} className={isActive ? "bg-white/[0.05]" : ""}>
                             <TableCell>
                               <div className="font-medium text-foreground">{course.name}</div>
                               <div className="mt-1 text-xs text-muted-foreground">
@@ -387,7 +584,7 @@ export function CourseManagementPage() {
                     <CardTitle>{editorMode === "create" ? "新增课程" : "编辑课程"}</CardTitle>
                     <CardDescription>
                       {editorMode === "create"
-                        ? "先补齐课程主数据，再进入成绩和规划闭环。"
+                        ? "默认值来自设置，可连续创建多门课程，减少重复输入。"
                         : "保存后会立即影响成绩录入、规划计算和首页快照。"}
                     </CardDescription>
                   </div>
@@ -408,7 +605,7 @@ export function CourseManagementPage() {
                   </div>
                 ) : (
                   <InlineMessage tone="neutral">
-                    当前是新建模式，保存后会自动进入该课程的编辑态。
+                    当前是新建模式，默认学期为 {preferences.defaultSemester}，保存后可直接继续录入下一门课程。
                   </InlineMessage>
                 )}
 
@@ -418,18 +615,29 @@ export function CourseManagementPage() {
                   </InlineMessage>
                 ) : null}
 
-                <Field label="课程名称">
+                <Field
+                  label="课程名称"
+                  error={touchedFields.name ? fieldErrors.name : null}
+                  description="课程名是唯一性校验的一部分。"
+                >
                   <Input
+                    ref={nameInputRef}
                     value={form.name}
+                    onBlur={() => setTouchedFields((current) => ({ ...current, name: true }))}
                     onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
                     placeholder="例如：Operating Systems"
                   />
                 </Field>
 
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="学期">
+                  <Field
+                    label="学期"
+                    error={touchedFields.semester ? fieldErrors.semester : null}
+                    description="常用格式：2026春 / 2026秋。"
+                  >
                     <Input
                       value={form.semester}
+                      onBlur={() => setTouchedFields((current) => ({ ...current, semester: true }))}
                       onChange={(event) =>
                         setForm((current) => ({ ...current, semester: event.target.value }))
                       }
@@ -437,9 +645,14 @@ export function CourseManagementPage() {
                     />
                   </Field>
 
-                  <Field label="学分">
+                  <Field
+                    label="学分"
+                    error={touchedFields.credit ? fieldErrors.credit : null}
+                    description="支持 3、3.0、4.5 这类写法。"
+                  >
                     <Input
                       value={form.credit}
+                      onBlur={() => setTouchedFields((current) => ({ ...current, credit: true }))}
                       onChange={(event) =>
                         setForm((current) => ({ ...current, credit: event.target.value }))
                       }
@@ -449,7 +662,7 @@ export function CourseManagementPage() {
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="课程状态">
+                  <Field label="课程状态" description="未修课程更适合先去规划，已修课程会进入成绩页。">
                     <Select
                       value={form.status}
                       onChange={(event) =>
@@ -464,7 +677,12 @@ export function CourseManagementPage() {
                     </Select>
                   </Field>
 
-                  <Field label="成绩类型">
+                  <Field
+                    label="成绩类型"
+                    description={
+                      form.status === "COMPLETED" ? "已修课程建议提前明确成绩类型。" : "未修课程可先沿用默认类型。"
+                    }
+                  >
                     <Select
                       value={form.scoreType ?? ""}
                       onChange={(event) =>
@@ -481,7 +699,7 @@ export function CourseManagementPage() {
                   </Field>
                 </div>
 
-                <Field label="备注">
+                <Field label="备注" description="可记录课程定位、难度提醒或选课原因。">
                   <Textarea
                     className="min-h-28"
                     value={form.note ?? ""}
@@ -490,19 +708,43 @@ export function CourseManagementPage() {
                   />
                 </Field>
 
-                <div className="grid gap-3 pt-2 sm:grid-cols-2">
+                <div className="grid gap-3 pt-2">
                   <AsyncButton
-                    onClick={handleSubmit}
+                    onClick={() => handleSubmit("default")}
                     pending={isSaving}
                     idleLabel={editorMode === "create" ? "创建课程" : "保存修改"}
                     pendingLabel="保存中..."
-                    icon={editorMode === "create" ? <Plus data-icon="inline-start" /> : <PencilLine data-icon="inline-start" />}
+                    icon={
+                      editorMode === "create" ? (
+                        <Plus data-icon="inline-start" />
+                      ) : (
+                        <PencilLine data-icon="inline-start" />
+                      )
+                    }
                   />
 
-                  <Button variant="secondary" onClick={handleCreateNew} disabled={isSaving}>
-                    <PencilLine data-icon="inline-start" />
-                    新建空白表单
-                  </Button>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {editorMode === "create" ? (
+                      <AsyncButton
+                        variant="secondary"
+                        onClick={() => handleSubmit("continue")}
+                        pending={isSaving}
+                        idleLabel="创建并继续录入"
+                        pendingLabel="保存中..."
+                        icon={<Plus data-icon="inline-start" />}
+                      />
+                    ) : (
+                      <Button variant="secondary" onClick={() => handleCreateNew()} disabled={isSaving}>
+                        <Plus data-icon="inline-start" />
+                        按默认值新建
+                      </Button>
+                    )}
+
+                    <Button variant="secondary" onClick={() => handleCreateNew()} disabled={isSaving}>
+                      <PencilLine data-icon="inline-start" />
+                      重置当前表单
+                    </Button>
+                  </div>
                 </div>
 
                 <Button
@@ -523,24 +765,41 @@ export function CourseManagementPage() {
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         title="确认删除当前课程？"
-        description="课程删除后，相关成绩、GPA 计算和规划结果都会一起受影响。这一步不会自动回退。"
+        description="课程删除后，相关成绩、GPA 计算和规划结果都会一起受影响。为了避免误删，需要再确认一次课程名。"
         confirmLabel="确认删除"
         pendingLabel="删除中..."
         onConfirm={handleDelete}
         pending={deleteCourseMutation.isPending}
         tone="danger"
+        requiredValue={selectedCourse?.name}
+        requiredValueLabel="当前课程名"
+        confirmHint="这是高风险操作，适合放在长期自用场景下做额外保护。"
       />
     </div>
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({
+  label,
+  children,
+  description,
+  error,
+}: {
+  label: string;
+  children: ReactNode;
+  description?: string;
+  error?: string | null;
+}) {
   return (
     <label className="flex flex-col gap-2">
       <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
         {label}
       </span>
       {children}
+      <span className={error ? "text-sm text-red-200" : "text-sm text-muted-foreground"}>
+        {error ?? description}
+      </span>
     </label>
   );
 }
+

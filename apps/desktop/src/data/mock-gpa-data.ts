@@ -1,8 +1,11 @@
 import type {
+  AppInfo,
   AppSnapshot,
   CourseDeleteResult,
   CourseRecord,
   CourseUpsertPayload,
+  DataBackupResult,
+  DataExportResult,
   GpaSummary,
   ImportKind,
   ImportWorkbenchResult,
@@ -36,6 +39,8 @@ const SCORE_TEXT_BY_THRESHOLD = [
   { max: 1.0, text: "60 \u5206" },
   { max: 4.0, text: null },
 ] as const;
+
+const MOCK_DATA_DIRECTORY = "/mock/gpa-manager";
 
 type MockState = {
   courses: CourseRecord[];
@@ -764,8 +769,39 @@ mockState.latestPlanning = savePlanningExpectations({
 });
 
 export const mockDesktopApi = {
+  getAppInfo(): AppInfo {
+    return {
+      databasePath: `${MOCK_DATA_DIRECTORY}/gpa_manager.sqlite3`,
+      dataDirectory: MOCK_DATA_DIRECTORY,
+      backupDirectory: `${MOCK_DATA_DIRECTORY}/backups`,
+      exportDirectory: `${MOCK_DATA_DIRECTORY}/exports`,
+    };
+  },
   getSnapshot(): AppSnapshot {
     return buildSnapshot();
+  },
+  createDatabaseBackup(label?: string): DataBackupResult {
+    const createdAt = new Date().toISOString();
+    const suffix = label?.trim() ? `-${label.trim().replace(/\s+/g, "-")}` : "";
+    const fileName = `gpa-manager-backup-${createdAt.slice(0, 19).replace(/[:T]/g, "-")}${suffix}.sqlite3`;
+    return {
+      path: `${MOCK_DATA_DIRECTORY}/backups/${fileName}`,
+      fileName,
+      createdAt,
+      sizeBytes: 32_768,
+    };
+  },
+  exportSnapshot(label?: string): DataExportResult {
+    const createdAt = new Date().toISOString();
+    const suffix = label?.trim() ? `-${label.trim().replace(/\s+/g, "-")}` : "";
+    const fileName = `gpa-manager-export-${createdAt.slice(0, 19).replace(/[:T]/g, "-")}${suffix}.json`;
+    return {
+      path: `${MOCK_DATA_DIRECTORY}/exports/${fileName}`,
+      fileName,
+      createdAt,
+      recordCount: mockState.courses.length,
+      sizeBytes: 18_432,
+    };
   },
   createCourse(payload: CourseUpsertPayload) {
     return createCourse(payload);
@@ -788,7 +824,7 @@ export const mockDesktopApi = {
   savePlanningExpectations(payload: PlanningExpectationSavePayload) {
     return savePlanningExpectations(payload);
   },
-  runImport(kind: ImportKind, text: string, apply: boolean) {
+  runImport(kind: ImportKind, text: string, apply: boolean, _confirmed = false) {
     return buildMockImportResult(kind, text, apply);
   },
 };

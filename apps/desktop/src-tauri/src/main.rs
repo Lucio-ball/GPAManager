@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use tauri::Manager;
 
 fn resolve_python_binary() -> String {
     if let Ok(explicit) = std::env::var("GPA_MANAGER_PYTHON") {
@@ -23,7 +24,11 @@ fn resolve_python_binary() -> String {
 }
 
 #[tauri::command]
-fn desktop_bridge(command: String, payload: Option<String>) -> Result<String, String> {
+fn desktop_bridge(
+    app_handle: tauri::AppHandle,
+    command: String,
+    payload: Option<String>,
+) -> Result<String, String> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir
         .join("..")
@@ -51,6 +56,14 @@ fn desktop_bridge(command: String, payload: Option<String>) -> Result<String, St
 
     if let Ok(db_path) = std::env::var("GPA_MANAGER_DB_PATH") {
         process.arg("--db").arg(db_path);
+    } else {
+        let app_data_dir = app_handle
+            .path()
+            .app_data_dir()
+            .map_err(|error| format!("Failed to resolve app data dir: {error}"))?;
+        std::fs::create_dir_all(&app_data_dir)
+            .map_err(|error| format!("Failed to create app data dir: {error}"))?;
+        process.arg("--db").arg(app_data_dir.join("gpa_manager.sqlite3"));
     }
 
     if let Some(payload) = payload {

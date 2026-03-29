@@ -2,13 +2,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAppFeedback } from "@/components/shared/feedback-center";
 import { desktopApi } from "@/services/backend";
 import type {
+  AppInfo,
   CourseUpsertPayload,
+  DataBackupResult,
+  DataExportResult,
   ImportKind,
   PlanningExpectationSavePayload,
   ScoreUpsertPayload,
 } from "@/types/domain";
 
 const queryKeys = {
+  appInfo: ["app-info"] as const,
   snapshot: ["snapshot"] as const,
 };
 
@@ -26,6 +30,14 @@ export function useSnapshotQuery() {
   return useQuery({
     queryKey: queryKeys.snapshot,
     queryFn: () => desktopApi.getSnapshot(),
+  });
+}
+
+export function useAppInfoQuery() {
+  return useQuery<AppInfo>({
+    queryKey: queryKeys.appInfo,
+    queryFn: () => desktopApi.getAppInfo(),
+    staleTime: Infinity,
   });
 }
 
@@ -148,8 +160,17 @@ export function useImportMutation() {
   const feedback = useAppFeedback();
 
   return useMutation({
-    mutationFn: ({ kind, text, apply }: { kind: ImportKind; text: string; apply: boolean }) =>
-      desktopApi.runImport(kind, text, apply),
+    mutationFn: ({
+      kind,
+      text,
+      apply,
+      confirmed = false,
+    }: {
+      kind: ImportKind;
+      text: string;
+      apply: boolean;
+      confirmed?: boolean;
+    }) => desktopApi.runImport(kind, text, apply, confirmed),
     onSuccess: async (result, variables) => {
       if (variables.apply && result.applied) {
         feedback.success(
@@ -161,6 +182,34 @@ export function useImportMutation() {
     },
     onError: (error) => {
       feedback.error("\u5bfc\u5165\u6267\u884c\u5931\u8d25", getErrorMessage(error));
+    },
+  });
+}
+
+export function useCreateBackupMutation() {
+  const feedback = useAppFeedback();
+
+  return useMutation<DataBackupResult, Error, { label?: string }>({
+    mutationFn: ({ label }) => desktopApi.createDatabaseBackup(label),
+    onSuccess: (result) => {
+      feedback.success("数据库备份已创建", `已保存到 ${result.path}`);
+    },
+    onError: (error) => {
+      feedback.error("创建数据库备份失败", getErrorMessage(error));
+    },
+  });
+}
+
+export function useExportSnapshotMutation() {
+  const feedback = useAppFeedback();
+
+  return useMutation<DataExportResult, Error, { label?: string }>({
+    mutationFn: ({ label }) => desktopApi.exportSnapshot(label),
+    onSuccess: (result) => {
+      feedback.success("数据导出已生成", `已导出 ${result.recordCount} 条课程记录到 ${result.path}`);
+    },
+    onError: (error) => {
+      feedback.error("导出数据失败", getErrorMessage(error));
     },
   });
 }

@@ -3,10 +3,15 @@ import {
   CheckCheck,
   CircleAlert,
   FileDown,
+  FolderArchive,
   ScanSearch,
+  ShieldAlert,
   TextSearch,
 } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { useAppPreferences } from "@/components/shared/app-preferences";
 import { AsyncButton } from "@/components/shared/async-button";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { PageHero } from "@/components/shared/page-hero";
 import { InlineMessage } from "@/components/shared/status-message";
 import { Badge } from "@/components/ui/badge";
@@ -14,21 +19,55 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { useImportMutation, useSnapshotQuery } from "@/hooks/use-snapshot-query";
+import {
+  useCreateBackupMutation,
+  useImportMutation,
+  useSnapshotQuery,
+} from "@/hooks/use-snapshot-query";
 import type { ImportKind, ImportWorkbenchResult } from "@/types/domain";
 
 type ImportDrafts = Record<ImportKind, string>;
+type ImportReportState = Record<ImportKind, ImportWorkbenchResult | undefined>;
+type PreviewState = Record<
+  ImportKind,
+  | {
+      text: string;
+      result: ImportWorkbenchResult;
+    }
+  | undefined
+>;
 
 const emptyDrafts: ImportDrafts = {
   COURSE: "",
   SCORE: "",
 };
 
+const emptyReports: ImportReportState = {
+  COURSE: undefined,
+  SCORE: undefined,
+};
+
+const emptyPreviews: PreviewState = {
+  COURSE: undefined,
+  SCORE: undefined,
+};
+
+function normalizeImportKind(value: string | null): ImportKind {
+  return value === "SCORE" ? "SCORE" : "COURSE";
+}
+
 export function ImportPage() {
+  const [searchParams] = useSearchParams();
+  const { preferences } = useAppPreferences();
   const snapshotQuery = useSnapshotQuery();
   const importMutation = useImportMutation();
-  const [kind, setKind] = useState<ImportKind>("COURSE");
+  const backupMutation = useCreateBackupMutation();
+  const [kind, setKind] = useState<ImportKind>(() => normalizeImportKind(searchParams.get("kind")));
   const [drafts, setDrafts] = useState<ImportDrafts>(emptyDrafts);
+  const [reports, setReports] = useState<ImportReportState>(emptyReports);
+  const [previews, setPreviews] = useState<PreviewState>(emptyPreviews);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!snapshotQuery.data) {
@@ -42,7 +81,9 @@ export function ImportPage() {
   }, [snapshotQuery.data]);
 
   const currentText = drafts[kind];
-  const currentResult = importMutation.data?.kind === kind ? importMutation.data : undefined;
+  const currentResult = reports[kind];
+  const currentPreview = previews[kind];
+  const previewMatchesCurrentText = currentPreview?.text === currentText;
   const isPreviewing = importMutation.isPending && importMutation.variables?.apply === false;
   const isApplying = importMutation.isPending && importMutation.variables?.apply === true;
 
@@ -62,6 +103,7 @@ export function ImportPage() {
       ...current,
       [kind]: value,
     }));
+    setLocalError(null);
   };
 
   const loadTemplate = () => {
@@ -76,16 +118,85 @@ export function ImportPage() {
     );
   };
 
+  const runPreview = () => {
+    setLocalError(null);
+    importMutation.mutate(
+      { kind, text: currentText, apply: false },
+      {
+        onSuccess: (result) => {
+          setReports((current) => ({ ...current, [kind]: result }));
+          setPreviews((current) => ({ ...current, [kind]: { text: currentText, result } }));
+        },
+      },
+    );
+  };
+
+  const runApply = async () => {
+    if (!currentText.trim()) {
+      setLocalError("请先粘贴结构化文本，再进行导入。");
+      return;
+    }
+    if (!currentPreview || !previewMatchesCurrentText) {
+      setLocalError("文本已变更或还未预检。正式导入前请先重新做一次预检。");
+      return;
+    }
+
+    setLocalError(null);
+
+    try {
+      if (preferences.backupBeforeImport) {
+        await backupMutation.mutateAsync({ label: `pre-import-${kind.toLowerCase()}` });
+      }
+
+      const result = await importMutation.mutateAsync({
+        kind,
+        text: currentText,
+        apply: true,
+        confirmed: true,
+      });
+      setReports((current) => ({ ...current, [kind]: result }));
+      setConfirmOpen(false);
+    } catch {
+      // Global feedback already handled by hooks. Keep dialog open so the user can review and retry.
+    }
+  };
+
+  const requestApply = async () => {
+    if (!currentText.trim()) {
+      setLocalError("请先粘贴结构化文本，再进行导入。");
+      return;
+    }
+    if (!currentPreview || !previewMatchesCurrentText) {
+      setLocalError("文本已变更或还未预检。正式导入前请先重新做一次预检。");
+      return;
+    }
+    if (!currentPreview.result.validCount) {
+      setLocalError("当前没有可导入的有效记录，请先修正预检问题。");
+      return;
+    }
+
+    setLocalError(null);
+    if (preferences.importConfirmRequired) {
+      setConfirmOpen(true);
+      return;
+    }
+
+    await runApply();
+  };
+
   return (
     <div className="flex flex-col gap-6">
       <PageHero
         eyebrow="Batch Import"
-        title="批量导入页现在直接接真实 bridge，预检和正式导入使用同一套结构化文本闭环。"
+        title="批量导入现在默认更偏稳：先预检，再确认，必要时先自动备份数据库。"
         description="支持课程导入和成绩导入切换。你可以先预检查看有效、跳过、失败明细，再确认正式导入；导入成功后会自动刷新桌面 snapshot。"
         actions={
           <>
             <Badge variant="outline">一行一条记录</Badge>
             <Badge variant="secondary">key=value; 分号分隔</Badge>
+            <Badge variant="secondary">
+              导入前自动备份 {preferences.backupBeforeImport ? "开启" : "关闭"}
+            </Badge>
           </>
         }
       />
@@ -102,11 +213,14 @@ export function ImportPage() {
             text={currentText}
             setText={setCurrentText}
             result={currentResult}
+            preview={currentPreview?.result}
+            previewMatchesCurrentText={previewMatchesCurrentText}
             isPreviewing={isPreviewing}
             isApplying={isApplying}
+            isBackingUp={backupMutation.isPending}
             stats={stats}
-            onPreview={() => importMutation.mutate({ kind, text: currentText, apply: false })}
-            onApply={() => importMutation.mutate({ kind, text: currentText, apply: true })}
+            onPreview={runPreview}
+            onApply={() => void requestApply()}
             onLoadTemplate={loadTemplate}
             isSnapshotLoading={snapshotQuery.isLoading}
             snapshotError={
@@ -115,6 +229,16 @@ export function ImportPage() {
                   ? snapshotQuery.error.message
                   : "模板加载失败。"
                 : null
+            }
+            localError={localError}
+            preferencesSummary={
+              preferences.importConfirmRequired
+                ? preferences.backupBeforeImport
+                  ? "正式导入前会先二次确认，并自动创建数据库备份。"
+                  : "正式导入前会先二次确认。"
+                : preferences.backupBeforeImport
+                  ? "正式导入前会自动创建数据库备份。"
+                  : "当前已关闭二次确认和自动备份，请自行谨慎操作。"
             }
           />
         </TabsContent>
@@ -125,11 +249,14 @@ export function ImportPage() {
             text={currentText}
             setText={setCurrentText}
             result={currentResult}
+            preview={currentPreview?.result}
+            previewMatchesCurrentText={previewMatchesCurrentText}
             isPreviewing={isPreviewing}
             isApplying={isApplying}
+            isBackingUp={backupMutation.isPending}
             stats={stats}
-            onPreview={() => importMutation.mutate({ kind, text: currentText, apply: false })}
-            onApply={() => importMutation.mutate({ kind, text: currentText, apply: true })}
+            onPreview={runPreview}
+            onApply={() => void requestApply()}
             onLoadTemplate={loadTemplate}
             isSnapshotLoading={snapshotQuery.isLoading}
             snapshotError={
@@ -139,9 +266,37 @@ export function ImportPage() {
                   : "模板加载失败。"
                 : null
             }
+            localError={localError}
+            preferencesSummary={
+              preferences.importConfirmRequired
+                ? preferences.backupBeforeImport
+                  ? "正式导入前会先二次确认，并自动创建数据库备份。"
+                  : "正式导入前会先二次确认。"
+                : preferences.backupBeforeImport
+                  ? "正式导入前会自动创建数据库备份。"
+                  : "当前已关闭二次确认和自动备份，请自行谨慎操作。"
+            }
           />
         </TabsContent>
       </Tabs>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title={kind === "COURSE" ? "确认导入课程记录？" : "确认导入成绩记录？"}
+        description={
+          currentPreview
+            ? `本次预检得到 ${currentPreview.result.validCount} 条可导入记录，跳过 ${currentPreview.result.skippedCount} 条，失败 ${currentPreview.result.failureCount} 条。确认后会把有效记录写入本地数据库。`
+            : "请先做预检，再确认导入。"
+        }
+        confirmLabel={
+          preferences.backupBeforeImport ? "备份后继续导入" : "确认正式导入"
+        }
+        pendingLabel={preferences.backupBeforeImport ? "备份并导入中..." : "导入中..."}
+        onConfirm={() => void runApply()}
+        pending={isApplying || backupMutation.isPending}
+        tone="danger"
+      />
     </div>
   );
 }
@@ -151,27 +306,37 @@ function ImportWorkbench({
   text,
   setText,
   result,
+  preview,
+  previewMatchesCurrentText,
   isPreviewing,
   isApplying,
+  isBackingUp,
   stats,
   onPreview,
   onApply,
   onLoadTemplate,
   isSnapshotLoading,
   snapshotError,
+  localError,
+  preferencesSummary,
 }: {
   kind: ImportKind;
   text: string;
   setText: (value: string) => void;
   result: ImportWorkbenchResult | undefined;
+  preview: ImportWorkbenchResult | undefined;
+  previewMatchesCurrentText: boolean;
   isPreviewing: boolean;
   isApplying: boolean;
+  isBackingUp: boolean;
   stats: Array<{ label: string; value: number }>;
   onPreview: () => void;
   onApply: () => void;
   onLoadTemplate: () => void;
   isSnapshotLoading: boolean;
   snapshotError: string | null;
+  localError: string | null;
+  preferencesSummary: string;
 }) {
   const reportTone = result?.applied
     ? "success"
@@ -194,6 +359,7 @@ function ImportWorkbench({
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           {snapshotError ? <InlineMessage tone="error">{snapshotError}</InlineMessage> : null}
+          {localError ? <InlineMessage tone="error">{localError}</InlineMessage> : null}
           {isSnapshotLoading && !text ? (
             <InlineMessage tone="neutral">正在加载导入模板…</InlineMessage>
           ) : null}
@@ -214,6 +380,19 @@ function ImportWorkbench({
             placeholder="请粘贴结构化文本。"
           />
 
+          <div className="rounded-[24px] border border-amber-400/16 bg-amber-400/8 p-4">
+            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <ShieldAlert className="size-4 text-amber-200" />
+              导入保护策略
+            </div>
+            <div className="mt-2 text-sm leading-6 text-foreground/78">{preferencesSummary}</div>
+            {!previewMatchesCurrentText && preview ? (
+              <div className="mt-2 text-sm leading-6 text-amber-100">
+                当前文本和上次预检结果不一致，请重新预检后再正式导入。
+              </div>
+            ) : null}
+          </div>
+
           <div className="flex flex-wrap gap-3">
             <Button variant="secondary" onClick={onLoadTemplate} disabled={isPreviewing || isApplying}>
               <TextSearch data-icon="inline-start" />
@@ -222,7 +401,7 @@ function ImportWorkbench({
             <AsyncButton
               variant="secondary"
               onClick={onPreview}
-              disabled={isApplying || !text.trim()}
+              disabled={isApplying || isBackingUp || !text.trim()}
               pending={isPreviewing}
               idleLabel="先做预检"
               pendingLabel="预检中..."
@@ -230,11 +409,17 @@ function ImportWorkbench({
             />
             <AsyncButton
               onClick={onApply}
-              disabled={isPreviewing || !text.trim()}
-              pending={isApplying}
-              idleLabel="确认导入"
-              pendingLabel="导入中..."
-              icon={<CheckCheck data-icon="inline-start" />}
+              disabled={isPreviewing || isBackingUp || !text.trim()}
+              pending={isApplying || isBackingUp}
+              idleLabel={previewMatchesCurrentText ? "确认导入" : "重新预检后导入"}
+              pendingLabel={isBackingUp ? "备份中..." : "导入中..."}
+              icon={
+                isBackingUp ? (
+                  <FolderArchive data-icon="inline-start" />
+                ) : (
+                  <CheckCheck data-icon="inline-start" />
+                )
+              }
             />
           </div>
         </CardContent>
@@ -247,7 +432,13 @@ function ImportWorkbench({
             <CardDescription>预检和正式导入都在这里展示结构化反馈。</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            <ReportBanner tone={reportTone} result={result} isPreviewing={isPreviewing} isApplying={isApplying} />
+            <ReportBanner
+              tone={reportTone}
+              result={result}
+              isPreviewing={isPreviewing}
+              isApplying={isApplying}
+              isBackingUp={isBackingUp}
+            />
             <div className="grid grid-cols-2 gap-3">
               {stats.map((stat) => (
                 <div key={stat.label} className="rounded-[22px] border border-white/8 bg-white/[0.04] p-4">
@@ -271,7 +462,7 @@ function ImportWorkbench({
           <CardContent className="flex flex-col gap-3">
             {!result && !isPreviewing && !isApplying ? (
               <InlineMessage tone="neutral">
-                还没有导入报告。先点击“先做预检”，或者直接执行导入。
+                还没有导入报告。先点击“先做预检”，确认无误后再正式导入。
               </InlineMessage>
             ) : null}
 
@@ -333,16 +524,22 @@ function ReportBanner({
   result,
   isPreviewing,
   isApplying,
+  isBackingUp,
 }: {
   tone: "success" | "error" | "info" | "neutral";
   result: ImportWorkbenchResult | undefined;
   isPreviewing: boolean;
   isApplying: boolean;
+  isBackingUp: boolean;
 }) {
-  if (isPreviewing || isApplying) {
+  if (isPreviewing || isApplying || isBackingUp) {
     return (
       <InlineMessage tone="neutral">
-        {isApplying ? "正在执行正式导入，完成后会自动刷新 snapshot。" : "正在执行预检，请稍候。"}
+        {isBackingUp
+          ? "正在创建导入前备份，请稍候。"
+          : isApplying
+            ? "正在执行正式导入，完成后会自动刷新 snapshot。"
+            : "正在执行预检，请稍候。"}
       </InlineMessage>
     );
   }
@@ -409,3 +606,4 @@ function ReportGroup({
     </div>
   );
 }
+

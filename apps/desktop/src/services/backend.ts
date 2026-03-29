@@ -1,10 +1,13 @@
 import { mockDesktopApi } from "@/data/mock-gpa-data";
 import { invokeBridge } from "@/services/bridge";
 import type {
+  AppInfo,
   AppSnapshot,
   CourseDeleteResult,
   CourseRecord,
   CourseUpsertPayload,
+  DataBackupResult,
+  DataExportResult,
   ImportKind,
   ImportWorkbenchResult,
   PlanningExpectationSavePayload,
@@ -13,8 +16,28 @@ import type {
 } from "@/types/domain";
 
 export const desktopApi = {
+  async getAppInfo(): Promise<AppInfo> {
+    return invokeBridge<AppInfo>("app.info", undefined, () => mockDesktopApi.getAppInfo());
+  },
+
   async getSnapshot(): Promise<AppSnapshot> {
     return invokeBridge<AppSnapshot>("snapshot", undefined, () => mockDesktopApi.getSnapshot());
+  },
+
+  async createDatabaseBackup(label?: string): Promise<DataBackupResult> {
+    return invokeBridge<DataBackupResult>(
+      "data.backup",
+      { label },
+      () => mockDesktopApi.createDatabaseBackup(label),
+    );
+  },
+
+  async exportSnapshot(label?: string): Promise<DataExportResult> {
+    return invokeBridge<DataExportResult>(
+      "data.export",
+      { label },
+      () => mockDesktopApi.exportSnapshot(label),
+    );
   },
 
   async createCourse(payload: CourseUpsertPayload): Promise<CourseRecord> {
@@ -63,11 +86,16 @@ export const desktopApi = {
     );
   },
 
-  async runImport(kind: ImportKind, text: string, apply: boolean): Promise<ImportWorkbenchResult> {
+  async runImport(
+    kind: ImportKind,
+    text: string,
+    apply: boolean,
+    confirmed = false,
+  ): Promise<ImportWorkbenchResult> {
     return invokeBridge<ImportWorkbenchResult>(
       "import.run",
-      { kind, text, apply },
-      () => mockDesktopApi.runImport(kind, text, apply),
+      { kind, text, apply, confirmed },
+      () => mockDesktopApi.runImport(kind, text, apply, confirmed),
     );
   },
 };

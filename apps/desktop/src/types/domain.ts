@@ -3,6 +3,28 @@ export type ScoreType = "PERCENTAGE" | "GRADE";
 export type ScenarioType = "OPTIMISTIC" | "NEUTRAL" | "CONSERVATIVE";
 export type ImportKind = "COURSE" | "SCORE";
 
+export type AppInfo = {
+  databasePath: string;
+  dataDirectory: string;
+  backupDirectory: string;
+  exportDirectory: string;
+};
+
+export type DataBackupResult = {
+  path: string;
+  fileName: string;
+  createdAt: string;
+  sizeBytes: number;
+};
+
+export type DataExportResult = {
+  path: string;
+  fileName: string;
+  createdAt: string;
+  recordCount: number;
+  sizeBytes: number;
+};
+
 export type CourseUpsertPayload = {
   name: string;
   semester: string;

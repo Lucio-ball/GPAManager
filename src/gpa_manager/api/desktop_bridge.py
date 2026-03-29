@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -41,8 +42,9 @@ class DesktopBridgeApp:
     def __init__(self, database_path: str | Path | None = None) -> None:
         resolved_database = self._resolve_database_path(database_path)
         resolved_database.parent.mkdir(parents=True, exist_ok=True)
+        self._database_path = resolved_database.resolve()
 
-        self._connection = create_connection(resolved_database)
+        self._connection = create_connection(self._database_path)
         initialize_database(self._connection)
 
         self._course_repository = CourseRepository(self._connection)
@@ -113,6 +115,71 @@ class DesktopBridgeApp:
             },
         }
 
+    def get_app_info(self) -> dict[str, Any]:
+        data_directory = self._database_path.parent
+        backup_directory = data_directory / "backups"
+        export_directory = data_directory / "exports"
+
+        return {
+            "database_path": str(self._database_path),
+            "data_directory": str(data_directory),
+            "backup_directory": str(backup_directory),
+            "export_directory": str(export_directory),
+        }
+
+    def create_database_backup(self, payload: dict[str, Any]) -> dict[str, Any]:
+        label = self._normalize_file_label(payload.get("label"))
+        created_at = datetime.now().astimezone()
+        backup_directory = self._database_path.parent / "backups"
+        backup_directory.mkdir(parents=True, exist_ok=True)
+
+        suffix = f"-{label}" if label else ""
+        file_name = f"gpa-manager-backup-{created_at.strftime('%Y%m%d-%H%M%S')}{suffix}.sqlite3"
+        backup_path = backup_directory / file_name
+
+        self._connection.execute("PRAGMA wal_checkpoint(FULL)")
+        backup_connection = sqlite3.connect(backup_path)
+        try:
+            self._connection.backup(backup_connection)
+        finally:
+            backup_connection.close()
+
+        return {
+            "path": str(backup_path),
+            "file_name": file_name,
+            "created_at": created_at,
+            "size_bytes": backup_path.stat().st_size,
+        }
+
+    def export_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
+        label = self._normalize_file_label(payload.get("label"))
+        created_at = datetime.now().astimezone()
+        export_directory = self._database_path.parent / "exports"
+        export_directory.mkdir(parents=True, exist_ok=True)
+
+        suffix = f"-{label}" if label else ""
+        file_name = f"gpa-manager-export-{created_at.strftime('%Y%m%d-%H%M%S')}{suffix}.json"
+        export_path = export_directory / file_name
+        snapshot_payload = serialize_for_frontend(self.snapshot())
+
+        export_payload = {
+            "exported_at": created_at.isoformat(),
+            "app_info": self.get_app_info(),
+            "snapshot": snapshot_payload,
+        }
+        export_path.write_text(
+            json.dumps(export_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        return {
+            "path": str(export_path),
+            "file_name": file_name,
+            "created_at": created_at,
+            "record_count": len(snapshot_payload["courses"]),
+            "size_bytes": export_path.stat().st_size,
+        }
+
     def create_planning_target(self, payload: dict[str, Any]) -> Any:
         target_gpa = str(payload["targetGpa"])
         target = self._planning_service.create_target(
@@ -155,11 +222,19 @@ class DesktopBridgeApp:
         kind = str(payload["kind"]).upper()
         text = str(payload.get("text", ""))
         apply = bool(payload.get("apply", False))
+        confirmed = bool(payload.get("confirmed", False))
+
+        if not text.strip():
+            raise ValueError("导入内容不能为空。")
+        if apply and not confirmed:
+            raise ValueError("正式导入前必须先完成确认。")
 
         if kind == "COURSE":
             parsed = self._import_service.parse_course_import_text(text)
             validation = self._import_service.validate_course_import_data(parsed)
             if apply:
+                if not validation.valid_records:
+                    raise ValueError("当前没有可导入的有效课程记录，请先修正预检问题。")
                 report = self._import_service.import_courses(validation)
                 return {
                     "kind": kind,
@@ -192,6 +267,8 @@ class DesktopBridgeApp:
             parsed = self._import_service.parse_score_import_text(text)
             validation = self._import_service.validate_score_import_data(parsed)
             if apply:
+                if not validation.valid_records:
+                    raise ValueError("当前没有可导入的有效成绩记录，请先修正预检问题。")
                 report = self._import_service.import_scores(validation)
                 return {
                     "kind": kind,
@@ -307,10 +384,18 @@ class DesktopBridgeApp:
 
         return PROJECT_ROOT / "data" / "gpa_manager.sqlite3"
 
+    @staticmethod
+    def _normalize_file_label(value: Any) -> str:
+        normalized = str(value or "").strip().lower().replace(" ", "-")
+        return "".join(character for character in normalized if character.isalnum() or character in {"-", "_"})
+
 
 def dispatch(app: DesktopBridgeApp, command: str, payload: dict[str, Any]) -> Any:
     commands = {
         "snapshot": lambda: app.snapshot(),
+        "app.info": lambda: app.get_app_info(),
+        "data.backup": lambda: app.create_database_backup(payload),
+        "data.export": lambda: app.export_snapshot(payload),
         "planning.create_target": lambda: app.create_planning_target(payload),
         "planning.save_expectations": lambda: app.save_planning_expectations(payload),
         "import.run": lambda: app.run_import(payload),

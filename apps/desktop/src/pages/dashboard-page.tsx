@@ -325,6 +325,37 @@ export function DashboardPage() {
             />
           </section>
 
+          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <WorkspaceShortcut
+              title="补录成绩"
+              description="先把已修课程的真实成绩补齐，GPA 和规划基线会更可靠。"
+              metric={`${missingScoreCount} 门待录入`}
+              to="/scores?filter=pending"
+              buttonLabel="去成绩页"
+            />
+            <WorkspaceShortcut
+              title="维护未修课程"
+              description="规划前先把未修课程和学分补完整，后续目标倒推才有依据。"
+              metric={`${plannedCourses.length} 门未修`}
+              to="/courses?tab=planned"
+              buttonLabel="去课程页"
+            />
+            <WorkspaceShortcut
+              title="继续目标规划"
+              description="最近一次规划结果已经保留，回到规划页可以继续补情景预期。"
+              metric={latestPlanning ? `目标 ${formatDecimal(latestPlanning.targetGpa)}` : "还没有目标"}
+              to="/planning"
+              buttonLabel={latestPlanning ? "恢复规划" : "创建目标"}
+            />
+            <WorkspaceShortcut
+              title="批量导入"
+              description="首次整理历史课程或一口气补成绩时，导入比逐条录入更省时。"
+              metric="支持课程 / 成绩"
+              to={`/import?kind=${missingScoreCount > 0 ? "SCORE" : "COURSE"}`}
+              buttonLabel="去导入页"
+            />
+          </section>
+
           <section className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_420px]">
             <Card>
               <CardHeader>
@@ -432,6 +463,7 @@ export function DashboardPage() {
                       <TableHead>学分</TableHead>
                       <TableHead>成绩</TableHead>
                       <TableHead>绩点</TableHead>
+                      <TableHead className="w-[120px]">去处理</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -447,6 +479,21 @@ export function DashboardPage() {
                         <TableCell>{formatCredit(course.credit)}</TableCell>
                         <TableCell>{course.rawScore ?? "未录入"}</TableCell>
                         <TableCell>{formatDecimal(course.gradePoint, 3, "—")}</TableCell>
+                        <TableCell>
+                          <Button
+                            asChild
+                            size="sm"
+                            variant={course.status === "PLANNED" ? "secondary" : "outline"}
+                          >
+                            <Link to={course.status === "PLANNED" ? "/courses?tab=planned" : "/scores?filter=pending"}>
+                              {course.status === "PLANNED"
+                                ? "去课程页"
+                                : course.hasScore
+                                  ? "去成绩页"
+                                  : "去录入"}
+                            </Link>
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -464,7 +511,7 @@ export function DashboardPage() {
                   <Suggestion
                     title={`还有 ${missingScoreCount} 门已修课程未录入成绩`}
                     description="优先去成绩页补录，当前 GPA 和规划基线都会更可靠。"
-                    to="/scores"
+                    to="/scores?filter=pending"
                     buttonLabel="去录入成绩"
                   />
                 ) : null}
@@ -482,14 +529,14 @@ export function DashboardPage() {
                   <Suggestion
                     title="当前没有未修课程"
                     description="如果学期还没结束，可以先去课程页补齐后续课程，再做规划。"
-                    to="/courses"
+                    to="/courses?tab=planned"
                     buttonLabel="去维护课程"
                   />
                 ) : null}
 
                 {!missingScoreCount && latestPlanning && plannedCourses.length > 0 ? (
                   <InlineMessage tone="success">
-                    当前首页信息已经比较完整，可以直接演示从首页进入课程、成绩和规划三条主链路。
+                    当前首页信息已经比较完整，可以直接从上方快捷入口回到课程、成绩和规划三个常用工作台。
                   </InlineMessage>
                 ) : null}
               </CardContent>
@@ -498,6 +545,43 @@ export function DashboardPage() {
         </>
       )}
     </div>
+  );
+}
+
+function WorkspaceShortcut({
+  title,
+  description,
+  metric,
+  to,
+  buttonLabel,
+}: {
+  title: string;
+  description: string;
+  metric: string;
+  to: string;
+  buttonLabel: string;
+}) {
+  return (
+    <Card className="overflow-hidden">
+      <CardContent className="flex h-full flex-col gap-4 p-5">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+          Quick Jump
+        </div>
+        <div>
+          <div className="text-xl font-semibold tracking-tight text-foreground">{title}</div>
+          <div className="mt-2 text-sm leading-7 text-foreground/74">{description}</div>
+        </div>
+        <Badge variant="secondary" className="w-fit">
+          {metric}
+        </Badge>
+        <Button asChild className="mt-auto">
+          <Link to={to}>
+            {buttonLabel}
+            <ArrowRight data-icon="inline-end" />
+          </Link>
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 

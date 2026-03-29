@@ -25,6 +25,7 @@
   --border: 220 18% 20%;
   --ring: 191 88% 64%;
   --accent: 191 88% 64%;
+  color-scheme: dark;
 }
 
 @layer base {
@@ -34,6 +35,12 @@
 
   html {
     @apply scroll-smooth;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
   }
 
   body {

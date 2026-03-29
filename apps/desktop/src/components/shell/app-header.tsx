@@ -1,4 +1,5 @@
 import { Database, HardDriveDownload, Sparkles } from "lucide-react";
+import { SettingsDialog } from "@/components/shared/settings-dialog";
 import { Badge } from "@/components/ui/badge";
 
 export function AppHeader() {
@@ -15,6 +16,7 @@ export function AppHeader() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <SettingsDialog />
           <Badge variant="outline" className="gap-2">
             <Database className="size-3.5" />
             SQLite

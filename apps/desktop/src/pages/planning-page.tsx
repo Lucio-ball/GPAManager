@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Calculator, RefreshCw, Save, Target } from "lucide-react";
+import { AsyncButton } from "@/components/shared/async-button";
 import { PageHero } from "@/components/shared/page-hero";
+import { InlineMessage } from "@/components/shared/status-message";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -158,12 +160,12 @@ export function PlanningPage() {
       />
 
       {partialScenarios.length ? (
-        <Notice tone="warning">
+        <InlineMessage tone="warning">
           当前仍有 {partialScenarios.length} 个情景未覆盖全部未修课程，结果仅代表已填写课程范围内的模拟值。
-        </Notice>
+        </InlineMessage>
       ) : null}
 
-      {formError ? <Notice tone="error">{formError}</Notice> : null}
+      {formError ? <InlineMessage tone="error">{formError}</InlineMessage> : null}
 
       <section className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
         <Card>
@@ -182,10 +184,13 @@ export function PlanningPage() {
               />
             </Field>
 
-            <Button onClick={handleCreateTarget} disabled={createPlanningTargetMutation.isPending}>
-              <Calculator data-icon="inline-start" />
-              {createPlanningTargetMutation.isPending ? "计算中..." : "创建 / 重建目标"}
-            </Button>
+            <AsyncButton
+              onClick={handleCreateTarget}
+              pending={createPlanningTargetMutation.isPending}
+              idleLabel="创建 / 重建目标"
+              pendingLabel="计算中..."
+              icon={<Calculator data-icon="inline-start" />}
+            />
 
             <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4 text-sm leading-7 text-foreground/76">
               当前基线：已计入 GPA 学分 {formatCredit(planning?.basedOnCompletedCreditSum)}，当前 GPA{" "}
@@ -271,13 +276,14 @@ export function PlanningPage() {
                 每一列对应一个规划情景。保存后会直接重算三情景结果，并把未全覆盖状态标红提示。
               </CardDescription>
             </div>
-            <Button
+            <AsyncButton
               onClick={handleSaveExpectations}
-              disabled={!planning || savePlanningExpectationsMutation.isPending || !plannedCourses.length}
-            >
-              <Save data-icon="inline-start" />
-              {savePlanningExpectationsMutation.isPending ? "保存并重算中..." : "保存预期并重算"}
-            </Button>
+              disabled={!planning || !plannedCourses.length}
+              pending={savePlanningExpectationsMutation.isPending}
+              idleLabel="保存预期并重算"
+              pendingLabel="保存并重算中..."
+              icon={<Save data-icon="inline-start" />}
+            />
           </div>
         </CardHeader>
         <CardContent>
@@ -328,11 +334,11 @@ export function PlanningPage() {
               </TableBody>
             </Table>
           ) : (
-            <Notice tone="neutral">
+            <InlineMessage tone="neutral">
               {!planning
                 ? "还没有创建目标 GPA，先完成目标输入后再填写三情景预期成绩。"
                 : "当前没有未修课程，暂时不需要填写预期成绩。"}
-            </Notice>
+            </InlineMessage>
           )}
         </CardContent>
       </Card>
@@ -393,24 +399,5 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       </span>
       {children}
     </label>
-  );
-}
-
-function Notice({
-  tone,
-  children,
-}: {
-  tone: "error" | "neutral" | "warning";
-  children: ReactNode;
-}) {
-  const className =
-    tone === "error"
-      ? "border border-red-400/18 bg-red-400/10 text-red-100"
-      : tone === "warning"
-        ? "border border-amber-400/18 bg-amber-400/10 text-amber-100"
-        : "border border-white/8 bg-white/[0.03] text-muted-foreground";
-
-  return (
-    <div className={`rounded-[22px] px-4 py-3 text-sm leading-6 ${className}`}>{children}</div>
   );
 }

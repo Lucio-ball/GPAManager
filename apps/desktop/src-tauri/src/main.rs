@@ -3,6 +3,25 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+fn resolve_python_binary() -> String {
+    if let Ok(explicit) = std::env::var("GPA_MANAGER_PYTHON") {
+        return explicit;
+    }
+
+    for candidate in ["python3", "python"] {
+        let available = Command::new(candidate)
+            .arg("--version")
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+        if available {
+            return candidate.to_string();
+        }
+    }
+
+    "python3".to_string()
+}
+
 #[tauri::command]
 fn desktop_bridge(command: String, payload: Option<String>) -> Result<String, String> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -16,7 +35,10 @@ fn desktop_bridge(command: String, payload: Option<String>) -> Result<String, St
     let bridge_script = std::env::var("GPA_MANAGER_BRIDGE_SCRIPT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| repo_root.join("tools").join("desktop_backend_bridge.py"));
-    let python_binary = std::env::var("GPA_MANAGER_PYTHON").unwrap_or_else(|_| "python".to_string());
+    let python_binary = resolve_python_binary();
+    let python_path = std::env::var("PYTHONPATH")
+        .map(|value| format!("{}:{}", src_dir.display(), value))
+        .unwrap_or_else(|_| src_dir.display().to_string());
 
     let mut process = Command::new(python_binary);
     process
@@ -24,7 +46,7 @@ fn desktop_bridge(command: String, payload: Option<String>) -> Result<String, St
         .arg("--command")
         .arg(command)
         .current_dir(&repo_root)
-        .env("PYTHONPATH", src_dir)
+        .env("PYTHONPATH", python_path)
         .env("PYTHONIOENCODING", "utf-8");
 
     if let Ok(db_path) = std::env::var("GPA_MANAGER_DB_PATH") {

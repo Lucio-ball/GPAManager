@@ -3,11 +3,12 @@ import {
   CheckCheck,
   CircleAlert,
   FileDown,
-  LoaderCircle,
   ScanSearch,
   TextSearch,
 } from "lucide-react";
+import { AsyncButton } from "@/components/shared/async-button";
 import { PageHero } from "@/components/shared/page-hero";
+import { InlineMessage } from "@/components/shared/status-message";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -192,9 +193,9 @@ function ImportWorkbench({
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          {snapshotError ? <InlineNotice tone="error">{snapshotError}</InlineNotice> : null}
+          {snapshotError ? <InlineMessage tone="error">{snapshotError}</InlineMessage> : null}
           {isSnapshotLoading && !text ? (
-            <InlineNotice tone="neutral">正在加载导入模板…</InlineNotice>
+            <InlineMessage tone="neutral">正在加载导入模板…</InlineMessage>
           ) : null}
 
           <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4 text-sm leading-6 text-muted-foreground">
@@ -218,22 +219,23 @@ function ImportWorkbench({
               <TextSearch data-icon="inline-start" />
               加载示例模板
             </Button>
-            <Button variant="secondary" onClick={onPreview} disabled={isPreviewing || isApplying || !text.trim()}>
-              {isPreviewing ? (
-                <LoaderCircle data-icon="inline-start" className="animate-spin" />
-              ) : (
-                <ScanSearch data-icon="inline-start" />
-              )}
-              {isPreviewing ? "预检中..." : "先做预检"}
-            </Button>
-            <Button onClick={onApply} disabled={isPreviewing || isApplying || !text.trim()}>
-              {isApplying ? (
-                <LoaderCircle data-icon="inline-start" className="animate-spin" />
-              ) : (
-                <CheckCheck data-icon="inline-start" />
-              )}
-              {isApplying ? "导入中..." : "确认导入"}
-            </Button>
+            <AsyncButton
+              variant="secondary"
+              onClick={onPreview}
+              disabled={isApplying || !text.trim()}
+              pending={isPreviewing}
+              idleLabel="先做预检"
+              pendingLabel="预检中..."
+              icon={<ScanSearch data-icon="inline-start" />}
+            />
+            <AsyncButton
+              onClick={onApply}
+              disabled={isPreviewing || !text.trim()}
+              pending={isApplying}
+              idleLabel="确认导入"
+              pendingLabel="导入中..."
+              icon={<CheckCheck data-icon="inline-start" />}
+            />
           </div>
         </CardContent>
       </Card>
@@ -268,9 +270,9 @@ function ImportWorkbench({
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             {!result && !isPreviewing && !isApplying ? (
-              <InlineNotice tone="neutral">
+              <InlineMessage tone="neutral">
                 还没有导入报告。先点击“先做预检”，或者直接执行导入。
-              </InlineNotice>
+              </InlineMessage>
             ) : null}
 
             {result?.importedIdentifiers.length ? (
@@ -313,11 +315,11 @@ function ImportWorkbench({
             ) : null}
 
             {result && !result.importedIdentifiers.length && !result.skipped.length && !result.errors.length ? (
-              <InlineNotice tone="success">
+              <InlineMessage tone="success">
                 {result.applied
                   ? "本次导入没有遇到跳过或失败记录。"
                   : "预检通过，当前文本可以进入正式导入。"}
-              </InlineNotice>
+              </InlineMessage>
             ) : null}
           </CardContent>
         </Card>
@@ -339,38 +341,38 @@ function ReportBanner({
 }) {
   if (isPreviewing || isApplying) {
     return (
-      <InlineNotice tone="neutral">
+      <InlineMessage tone="neutral">
         {isApplying ? "正在执行正式导入，完成后会自动刷新 snapshot。" : "正在执行预检，请稍候。"}
-      </InlineNotice>
+      </InlineMessage>
     );
   }
 
   if (!result) {
-    return <InlineNotice tone="neutral">预检和导入结果会在这里汇总显示。</InlineNotice>;
+    return <InlineMessage tone="neutral">预检和导入结果会在这里汇总显示。</InlineMessage>;
   }
 
   if (tone === "success") {
     return (
-      <InlineNotice tone="success">
+      <InlineMessage tone="success">
         导入完成，共成功写入 {result.successCount} 条记录，跳过 {result.skippedCount} 条，失败{" "}
         {result.failureCount} 条。
-      </InlineNotice>
+      </InlineMessage>
     );
   }
 
   if (tone === "error") {
     return (
-      <InlineNotice tone="error">
+      <InlineMessage tone="error">
         发现 {result.failureCount} 条失败记录。请根据下方报告修正后再重新预检或导入。
-      </InlineNotice>
+      </InlineMessage>
     );
   }
 
   return (
-    <InlineNotice tone="info">
+    <InlineMessage tone="info">
       预检完成，可用记录 {result.validCount} 条，跳过 {result.skippedCount} 条，失败{" "}
       {result.failureCount} 条。
-    </InlineNotice>
+    </InlineMessage>
   );
 }
 
@@ -406,23 +408,4 @@ function ReportGroup({
       ))}
     </div>
   );
-}
-
-function InlineNotice({
-  tone,
-  children,
-}: {
-  tone: "success" | "error" | "info" | "neutral";
-  children: ReactNode;
-}) {
-  const className =
-    tone === "success"
-      ? "border border-emerald-400/18 bg-emerald-400/10 text-emerald-100"
-      : tone === "error"
-        ? "border border-red-400/18 bg-red-400/10 text-red-100"
-        : tone === "info"
-          ? "border border-accent/18 bg-accent/10 text-foreground/82"
-          : "border border-white/8 bg-white/[0.03] text-muted-foreground";
-
-  return <div className={`rounded-[22px] px-4 py-3 text-sm leading-6 ${className}`}>{children}</div>;
 }

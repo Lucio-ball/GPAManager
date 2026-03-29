@@ -11,7 +11,7 @@ type BridgeEnvelope<T> = {
   error?: string | BridgeErrorPayload;
 };
 
-function isTauriRuntime() {
+export function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 

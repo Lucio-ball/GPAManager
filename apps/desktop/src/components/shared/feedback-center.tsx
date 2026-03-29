@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, type PropsWithChildren } from "react";
 import { CheckCircle2, CircleAlert, X } from "lucide-react";
+import { getMessageToneClasses } from "@/components/shared/status-message";
 import { cn } from "@/lib/cn";
 
 type FeedbackTone = "success" | "error";
@@ -48,10 +49,8 @@ export function FeedbackProvider({ children }: PropsWithChildren) {
           <div
             key={item.id}
             className={cn(
-              "pointer-events-auto rounded-[24px] border px-4 py-3 shadow-[0_24px_60px_-26px_rgba(0,0,0,0.86)] backdrop-blur-xl",
-              item.tone === "success"
-                ? "border-emerald-400/18 bg-emerald-400/10"
-                : "border-red-400/18 bg-red-400/10",
+              "pointer-events-auto rounded-[24px] px-4 py-3 shadow-[0_24px_60px_-26px_rgba(0,0,0,0.86)] backdrop-blur-xl",
+              getMessageToneClasses(item.tone === "success" ? "success" : "error"),
             )}
           >
             <div className="flex items-start gap-3">

@@ -7,8 +7,11 @@ import {
   Search,
   X,
 } from "lucide-react";
+import { AsyncButton } from "@/components/shared/async-button";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { CourseStatusBadge, ScoreTypeBadge } from "@/components/shared/course-status-badge";
 import { PageHero } from "@/components/shared/page-hero";
+import { InlineMessage, StatePanel } from "@/components/shared/status-message";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -92,6 +95,7 @@ export function ScoreManagementPage() {
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [form, setForm] = useState<ScoreFormState>({ scoreType: null, rawScore: "" });
   const [formError, setFormError] = useState<string | null>(null);
+  const [clearDialogOpen, setClearDialogOpen] = useState(false);
 
   const deferredSearch = useDeferredValue(searchText.trim());
   const filteredCourses = useMemo(
@@ -170,6 +174,7 @@ export function ScoreManagementPage() {
     setFormError(null);
     clearScoreMutation.mutate(selectedCourse.id, {
       onSuccess: (course) => {
+        setClearDialogOpen(false);
         setSelectedCourseId(course.id);
         setForm(toScoreForm(course));
       },
@@ -206,16 +211,16 @@ export function ScoreManagementPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            {formError ? <Notice tone="error">{formError}</Notice> : null}
+            {formError ? <InlineMessage tone="error">{formError}</InlineMessage> : null}
 
             {snapshotQuery.isLoading ? (
-              <Notice tone="neutral">正在加载可录入课程...</Notice>
+              <InlineMessage tone="neutral">正在加载可录入课程...</InlineMessage>
             ) : snapshotQuery.isError ? (
-              <Notice tone="error">
+              <InlineMessage tone="error">
                 {snapshotQuery.error instanceof Error
                   ? snapshotQuery.error.message
                   : "成绩列表加载失败，请稍后重试。"}
-              </Notice>
+              </InlineMessage>
             ) : selectedCourse ? (
               <div className="rounded-[24px] border border-white/8 bg-white/[0.04] p-4">
                 <div className="text-sm font-semibold text-foreground">{selectedCourse.name}</div>
@@ -229,7 +234,7 @@ export function ScoreManagementPage() {
                 </div>
               </div>
             ) : (
-              <Notice tone="neutral">当前没有可录入的已修课程。</Notice>
+              <InlineMessage tone="neutral">当前没有可录入的已修课程。</InlineMessage>
             )}
 
             <div className="grid grid-cols-2 gap-3">
@@ -287,33 +292,29 @@ export function ScoreManagementPage() {
             </Field>
 
             {selectedCourse?.hasScore ? (
-              <Notice tone="neutral">
+              <InlineMessage tone="neutral">
                 当前已录入成绩：{selectedCourse.rawScore}，对应绩点{" "}
                 {formatDecimal(selectedCourse.gradePoint, 3, "--")}。
-              </Notice>
+              </InlineMessage>
             ) : null}
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <Button onClick={handleSave} disabled={!selectedCourse || isSaving}>
-                {isSaving ? (
-                  <LoaderCircle data-icon="inline-start" className="animate-spin" />
-                ) : (
-                  <Save data-icon="inline-start" />
-                )}
-                {isSaving ? "保存中..." : selectedCourse?.hasScore ? "更新成绩" : "录入成绩"}
-              </Button>
+              <AsyncButton
+                onClick={handleSave}
+                disabled={!selectedCourse}
+                pending={isSaving}
+                idleLabel={selectedCourse?.hasScore ? "更新成绩" : "录入成绩"}
+                pendingLabel="保存中..."
+                icon={<Save data-icon="inline-start" />}
+              />
 
               <Button
-                variant="outline"
-                onClick={handleClear}
+                variant="destructive"
+                onClick={() => setClearDialogOpen(true)}
                 disabled={!selectedCourse?.hasScore || clearScoreMutation.isPending}
               >
-                {clearScoreMutation.isPending ? (
-                  <LoaderCircle data-icon="inline-start" className="animate-spin" />
-                ) : (
-                  <Eraser data-icon="inline-start" />
-                )}
-                {clearScoreMutation.isPending ? "清空中..." : "清空成绩"}
+                <Eraser data-icon="inline-start" />
+                清空成绩
               </Button>
             </div>
           </CardContent>
@@ -459,6 +460,18 @@ export function ScoreManagementPage() {
           </TabsContent>
         </Tabs>
       </section>
+
+      <ConfirmDialog
+        open={clearDialogOpen}
+        onOpenChange={setClearDialogOpen}
+        title="确认清空当前成绩？"
+        description="清空后，这门课会从当前 GPA 统计中移除，首页指标和目标规划结果也会同步回滚。"
+        confirmLabel="确认清空"
+        pendingLabel="清空中..."
+        onConfirm={handleClear}
+        pending={clearScoreMutation.isPending}
+        tone="danger"
+      />
     </div>
   );
 }
@@ -481,40 +494,6 @@ function MetricCard({ label, value }: { label: string; value: number }) {
         {label}
       </div>
       <div className="mt-2 text-3xl font-semibold tracking-tight text-foreground">{value}</div>
-    </div>
-  );
-}
-
-function Notice({
-  tone,
-  children,
-}: {
-  tone: "error" | "neutral";
-  children: ReactNode;
-}) {
-  const className =
-    tone === "error"
-      ? "border border-red-400/18 bg-red-400/10 text-red-100"
-      : "border border-white/8 bg-white/[0.03] text-muted-foreground";
-
-  return <div className={`rounded-[22px] px-4 py-3 text-sm leading-6 ${className}`}>{children}</div>;
-}
-
-function StatePanel({
-  tone,
-  children,
-}: {
-  tone: "neutral" | "error";
-  children: ReactNode;
-}) {
-  const className =
-    tone === "error"
-      ? "border border-red-400/18 bg-red-400/10 text-red-100"
-      : "border border-white/8 bg-white/[0.03] text-muted-foreground";
-
-  return (
-    <div className={`flex flex-col gap-4 rounded-[24px] px-5 py-6 text-sm leading-6 ${className}`}>
-      {children}
     </div>
   );
 }

@@ -4,13 +4,15 @@ import {
   PencilLine,
   Plus,
   RefreshCw,
-  Save,
   Search,
   Trash2,
   X,
 } from "lucide-react";
+import { AsyncButton } from "@/components/shared/async-button";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { CourseStatusBadge, ScoreTypeBadge } from "@/components/shared/course-status-badge";
 import { PageHero } from "@/components/shared/page-hero";
+import { InlineMessage, StatePanel } from "@/components/shared/status-message";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -108,6 +110,7 @@ export function CourseManagementPage() {
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [form, setForm] = useState<CourseUpsertPayload>(emptyCourseForm);
   const [formError, setFormError] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   const deferredSearch = useDeferredValue(searchText.trim());
   const filteredCourses = useMemo(
@@ -191,6 +194,7 @@ export function CourseManagementPage() {
     setFormError(null);
     deleteCourseMutation.mutate(selectedCourseId, {
       onSuccess: () => {
+        setDeleteDialogOpen(false);
         handleCreateNew();
       },
       onError: (error) => {
@@ -391,7 +395,7 @@ export function CourseManagementPage() {
                 </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
-                {formError ? <Notice tone="error">{formError}</Notice> : null}
+                {formError ? <InlineMessage tone="error">{formError}</InlineMessage> : null}
 
                 {selectedCourse ? (
                   <div className="rounded-[24px] border border-white/8 bg-white/[0.04] p-4">
@@ -403,13 +407,15 @@ export function CourseManagementPage() {
                     </div>
                   </div>
                 ) : (
-                  <Notice tone="neutral">当前是新建模式，保存后会自动进入该课程的编辑态。</Notice>
+                  <InlineMessage tone="neutral">
+                    当前是新建模式，保存后会自动进入该课程的编辑态。
+                  </InlineMessage>
                 )}
 
                 {selectedCourse?.hasScore ? (
-                  <Notice tone="warning">
+                  <InlineMessage tone="warning">
                     当前课程已经录入真实成绩。如果要改回“未修”，请先到成绩页清空成绩。
-                  </Notice>
+                  </InlineMessage>
                 ) : null}
 
                 <Field label="课程名称">
@@ -485,16 +491,13 @@ export function CourseManagementPage() {
                 </Field>
 
                 <div className="grid gap-3 pt-2 sm:grid-cols-2">
-                  <Button onClick={handleSubmit} disabled={isSaving}>
-                    {isSaving ? (
-                      <LoaderCircle data-icon="inline-start" className="animate-spin" />
-                    ) : editorMode === "create" ? (
-                      <Plus data-icon="inline-start" />
-                    ) : (
-                      <Save data-icon="inline-start" />
-                    )}
-                    {isSaving ? "保存中..." : editorMode === "create" ? "创建课程" : "保存修改"}
-                  </Button>
+                  <AsyncButton
+                    onClick={handleSubmit}
+                    pending={isSaving}
+                    idleLabel={editorMode === "create" ? "创建课程" : "保存修改"}
+                    pendingLabel="保存中..."
+                    icon={editorMode === "create" ? <Plus data-icon="inline-start" /> : <PencilLine data-icon="inline-start" />}
+                  />
 
                   <Button variant="secondary" onClick={handleCreateNew} disabled={isSaving}>
                     <PencilLine data-icon="inline-start" />
@@ -503,23 +506,30 @@ export function CourseManagementPage() {
                 </div>
 
                 <Button
-                  variant="outline"
-                  onClick={handleDelete}
+                  variant="destructive"
+                  onClick={() => setDeleteDialogOpen(true)}
                   disabled={editorMode !== "edit" || !selectedCourseId || deleteCourseMutation.isPending}
-                  className="border-red-400/18 text-red-200 hover:bg-red-400/10 hover:text-red-100"
                 >
-                  {deleteCourseMutation.isPending ? (
-                    <LoaderCircle data-icon="inline-start" className="animate-spin" />
-                  ) : (
-                    <Trash2 data-icon="inline-start" />
-                  )}
-                  {deleteCourseMutation.isPending ? "删除中..." : "删除当前课程"}
+                  <Trash2 data-icon="inline-start" />
+                  删除当前课程
                 </Button>
               </CardContent>
             </Card>
           </div>
         </TabsContent>
       </Tabs>
+
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        title="确认删除当前课程？"
+        description="课程删除后，相关成绩、GPA 计算和规划结果都会一起受影响。这一步不会自动回退。"
+        confirmLabel="确认删除"
+        pendingLabel="删除中..."
+        onConfirm={handleDelete}
+        pending={deleteCourseMutation.isPending}
+        tone="danger"
+      />
     </div>
   );
 }
@@ -533,40 +543,4 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       {children}
     </label>
   );
-}
-
-function StatePanel({
-  tone,
-  children,
-}: {
-  tone: "neutral" | "error";
-  children: ReactNode;
-}) {
-  const className =
-    tone === "error"
-      ? "border border-red-400/18 bg-red-400/10 text-red-100"
-      : "border border-white/8 bg-white/[0.03] text-muted-foreground";
-
-  return (
-    <div className={`flex flex-col gap-4 rounded-[24px] px-5 py-6 text-sm leading-6 ${className}`}>
-      {children}
-    </div>
-  );
-}
-
-function Notice({
-  tone,
-  children,
-}: {
-  tone: "error" | "warning" | "neutral";
-  children: ReactNode;
-}) {
-  const className =
-    tone === "error"
-      ? "border border-red-400/18 bg-red-400/10 text-red-100"
-      : tone === "warning"
-        ? "border border-amber-400/18 bg-amber-400/10 text-amber-100"
-        : "border border-white/8 bg-white/[0.03] text-muted-foreground";
-
-  return <div className={`rounded-[22px] px-4 py-3 text-sm leading-6 ${className}`}>{children}</div>;
 }

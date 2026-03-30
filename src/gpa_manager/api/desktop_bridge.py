@@ -3,24 +3,30 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sqlite3
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
+from gpa_manager.common.exceptions import DatabaseMigrationError
+from gpa_manager.common.utils import new_id
 from gpa_manager.db.connection import create_connection
-from gpa_manager.db.schema import initialize_database
+from gpa_manager.db.health import run_startup_self_check
+from gpa_manager.db.schema import CURRENT_SCHEMA_VERSION, ensure_database_schema
 from gpa_manager.models.dto import (
     CourseCreateCommand,
     CourseUpdateCommand,
     PlanningTargetCreateCommand,
     ScenarioExpectationSaveCommand,
 )
+from gpa_manager.models.entities import OperationLogEntry
 from gpa_manager.models.enums import CourseStatus, ScoreType
 from gpa_manager.repositories.course_repository import CourseRepository
+from gpa_manager.repositories.operation_log_repository import OperationLogRepository
 from gpa_manager.repositories.planning_scenario_repository import PlanningScenarioRepository
 from gpa_manager.repositories.planning_target_repository import PlanningTargetRepository
 from gpa_manager.repositories.scenario_course_expectation_repository import (
@@ -43,47 +49,15 @@ class DesktopBridgeApp:
         resolved_database = self._resolve_database_path(database_path)
         resolved_database.parent.mkdir(parents=True, exist_ok=True)
         self._database_path = resolved_database.resolve()
-
-        self._connection = create_connection(self._database_path)
-        initialize_database(self._connection)
-
-        self._course_repository = CourseRepository(self._connection)
-        self._score_repository = ScoreRepository(self._connection)
-        self._planning_target_repository = PlanningTargetRepository(self._connection)
-        self._planning_scenario_repository = PlanningScenarioRepository(self._connection)
-        self._expectation_repository = ScenarioCourseExpectationRepository(self._connection)
-        self._rule_engine = SchoolRuleEngine()
-
-        self._course_service = CourseService(
-            self._course_repository,
-            self._score_repository,
-            self._rule_engine,
-        )
-        self._score_service = ScoreService(
-            self._course_repository,
-            self._score_repository,
-            self._rule_engine,
-        )
-        self._gpa_service = GpaCalculationService(self._course_repository, self._score_repository)
-        self._planning_service = PlanningService(
-            self._course_repository,
-            self._planning_target_repository,
-            self._planning_scenario_repository,
-            self._expectation_repository,
-            self._gpa_service,
-            self._rule_engine,
-        )
-        self._import_service = ImportService(
-            connection=self._connection,
-            course_repository=self._course_repository,
-            score_repository=self._score_repository,
-            course_service=self._course_service,
-            score_service=self._score_service,
-            rule_engine=self._rule_engine,
-        )
+        self._connection: sqlite3.Connection | None = None
+        self._schema_state = None
+        self._startup_health = None
+        self._bootstrap_runtime()
 
     def close(self) -> None:
-        self._connection.close()
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
 
     def snapshot(self) -> dict[str, Any]:
         summary = self._gpa_service.calculate_current_gpa()
@@ -197,10 +171,247 @@ class DesktopBridgeApp:
             "data_directory": str(data_directory),
             "backup_directory": str(backup_directory),
             "export_directory": str(export_directory),
+            "schema_version": self._schema_state.schema_version,
         }
+
+    def get_startup_health(self) -> Any:
+        return self._startup_health
+
+    def list_operation_logs(self, payload: dict[str, Any]) -> list[OperationLogEntry]:
+        limit = int(payload.get("limit", 12))
+        return self._operation_log_repository.list_recent(limit=limit)
+
+    def list_database_backups(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        limit = int(payload.get("limit", 12))
+        backup_directory = self._database_path.parent / "backups"
+        if not backup_directory.exists():
+            return []
+
+        backup_files = sorted(
+            (
+                path
+                for path in backup_directory.glob("*.sqlite3")
+                if path.is_file()
+            ),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )[: max(1, min(limit, 100))]
+
+        return [self._build_file_info(path) for path in backup_files]
 
     def create_database_backup(self, payload: dict[str, Any]) -> dict[str, Any]:
         label = self._normalize_file_label(payload.get("label"))
+        return self._run_logged_operation(
+            operation_type="data.backup",
+            object_type="backup",
+            object_summary="数据库完整备份",
+            success_message="已创建 SQLite 备份。",
+            details_builder=lambda result: {
+                "path": result["path"],
+                "size_bytes": result["size_bytes"],
+            },
+            action=lambda: self._create_database_backup_file(label=label),
+        )
+
+    def export_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
+        label = self._normalize_file_label(payload.get("label"))
+        return self._run_logged_operation(
+            operation_type="data.export",
+            object_type="export",
+            object_summary="JSON 快照导出",
+            success_message="已导出当前数据快照。",
+            details_builder=lambda result: {
+                "path": result["path"],
+                "record_count": result["record_count"],
+            },
+            action=lambda: self._export_snapshot_file(label=label),
+        )
+
+    def restore_database_backup(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not bool(payload.get("confirmed", False)):
+            raise ValueError("恢复备份前必须完成强确认。")
+
+        backup_path = Path(str(payload.get("backupPath", ""))).expanduser().resolve()
+        backup_directory = (self._database_path.parent / "backups").resolve()
+        if not backup_path.exists():
+            raise ValueError("指定的备份文件不存在，请先刷新备份列表后重试。")
+        if not backup_path.is_file():
+            raise ValueError("指定的恢复来源不是有效的 SQLite 备份文件。")
+        if backup_path.suffix.lower() != ".sqlite3":
+            raise ValueError("当前只支持从 .sqlite3 数据库备份恢复。")
+        if backup_directory not in backup_path.parents:
+            raise ValueError("为避免误恢复，当前只允许从应用备份目录中的 SQLite 文件恢复。")
+
+        return self._run_logged_operation(
+            operation_type="data.restore_backup",
+            object_type="backup",
+            object_summary=backup_path.name,
+            success_message="已从备份恢复当前数据库。",
+            details_builder=lambda result: {
+                "restored_from": result["restored_from"],
+                "safeguard_backup_path": result["safeguard_backup_path"],
+            },
+            action=lambda: self._restore_database_from_backup(backup_path),
+        )
+
+    def create_planning_target(self, payload: dict[str, Any]) -> Any:
+        target_gpa = str(payload["targetGpa"])
+        return self._run_logged_operation(
+            operation_type="planning.create_target",
+            object_type="planning_target",
+            object_summary=f"目标 GPA {target_gpa}",
+            success_message=f"已创建目标 GPA {target_gpa}。",
+            action=lambda: self._create_planning_target_impl(target_gpa),
+        )
+
+    def save_planning_expectations(self, payload: dict[str, Any]) -> Any:
+        target_id = str(payload["targetId"])
+        expectation_count = len(payload.get("expectations", []))
+        return self._run_logged_operation(
+            operation_type="planning.save_expectations",
+            object_type="planning_expectation",
+            object_summary=f"target={target_id}，items={expectation_count}",
+            success_message="已保存规划预期并刷新情景结果。",
+            details_builder=lambda _result: {
+                "target_id": target_id,
+                "expectation_count": expectation_count,
+            },
+            action=lambda: self._save_planning_expectations_impl(payload),
+        )
+
+    def run_import(self, payload: dict[str, Any]) -> dict[str, Any]:
+        apply = bool(payload.get("apply", False))
+        if not apply:
+            return self._run_import_impl(payload)
+
+        kind = str(payload["kind"]).upper()
+        return self._run_logged_operation(
+            operation_type="import.run",
+            object_type="import",
+            object_summary=f"{kind} 批量导入",
+            success_message=f"{kind} 批量导入已执行。",
+            details_builder=lambda result: {
+                "kind": kind,
+                "success_count": result["success_count"],
+                "error_count": result["error_count"],
+            },
+            action=lambda: self._run_import_impl(payload),
+        )
+
+    def create_course(self, payload: dict[str, Any]) -> Any:
+        course_summary = f"{str(payload['name']).strip()} ({str(payload['semester']).strip()})"
+        return self._run_logged_operation(
+            operation_type="course.create",
+            object_type="course",
+            object_summary=course_summary,
+            success_message="已创建课程。",
+            action=lambda: self._create_course_impl(payload),
+        )
+
+    def update_course(self, payload: dict[str, Any]) -> Any:
+        course_summary = f"{str(payload['name']).strip()} ({str(payload['semester']).strip()})"
+        return self._run_logged_operation(
+            operation_type="course.update",
+            object_type="course",
+            object_summary=course_summary,
+            success_message="已更新课程。",
+            action=lambda: self._update_course_impl(payload),
+        )
+
+    def delete_course(self, payload: dict[str, Any]) -> dict[str, Any]:
+        course_id = str(payload["courseId"])
+        course = self._course_service.get_course(course_id)
+        course_summary = f"{course.name} ({course.semester})"
+        return self._run_logged_operation(
+            operation_type="course.delete",
+            object_type="course",
+            object_summary=course_summary,
+            success_message="已删除课程。",
+            details_builder=lambda _result: {"course_id": course_id},
+            action=lambda: self._delete_course_impl(course_id),
+        )
+
+    def record_score(self, payload: dict[str, Any]) -> Any:
+        course = self._course_service.get_course(str(payload["courseId"]))
+        course_summary = f"{course.name} ({course.semester}) -> {str(payload['rawScore']).strip()}"
+        return self._run_logged_operation(
+            operation_type="score.record",
+            object_type="score",
+            object_summary=course_summary,
+            success_message="已保存课程成绩。",
+            action=lambda: self._record_score_impl(payload),
+        )
+
+    def clear_score(self, payload: dict[str, Any]) -> Any:
+        course = self._course_service.get_course(str(payload["courseId"]))
+        course_summary = f"{course.name} ({course.semester})"
+        return self._run_logged_operation(
+            operation_type="score.clear",
+            object_type="score",
+            object_summary=course_summary,
+            success_message="已清空课程成绩。",
+            action=lambda: self._clear_score_impl(payload),
+        )
+
+    def _bootstrap_runtime(self) -> None:
+        try:
+            connection = create_connection(self._database_path)
+        except sqlite3.Error as exc:
+            raise RuntimeError(
+                f"无法打开本地数据库：{self._database_path}。请检查应用数据目录权限或路径占用情况。原始错误：{exc}"
+            ) from exc
+
+        try:
+            schema_state = ensure_database_schema(connection, self._database_path)
+        except Exception:
+            connection.close()
+            raise
+
+        self._connection = connection
+        self._schema_state = schema_state
+
+        self._course_repository = CourseRepository(connection)
+        self._score_repository = ScoreRepository(connection)
+        self._planning_target_repository = PlanningTargetRepository(connection)
+        self._planning_scenario_repository = PlanningScenarioRepository(connection)
+        self._expectation_repository = ScenarioCourseExpectationRepository(connection)
+        self._operation_log_repository = OperationLogRepository(connection)
+        self._rule_engine = SchoolRuleEngine()
+
+        self._course_service = CourseService(
+            self._course_repository,
+            self._score_repository,
+            self._rule_engine,
+        )
+        self._score_service = ScoreService(
+            self._course_repository,
+            self._score_repository,
+            self._rule_engine,
+        )
+        self._gpa_service = GpaCalculationService(self._course_repository, self._score_repository)
+        self._planning_service = PlanningService(
+            self._course_repository,
+            self._planning_target_repository,
+            self._planning_scenario_repository,
+            self._expectation_repository,
+            self._gpa_service,
+            self._rule_engine,
+        )
+        self._import_service = ImportService(
+            connection=connection,
+            course_repository=self._course_repository,
+            score_repository=self._score_repository,
+            course_service=self._course_service,
+            score_service=self._score_service,
+            rule_engine=self._rule_engine,
+        )
+        self._startup_health = run_startup_self_check(
+            connection=connection,
+            database_path=self._database_path,
+            schema_state=schema_state,
+        )
+
+    def _create_database_backup_file(self, label: str | None = None) -> dict[str, Any]:
         created_at = datetime.now().astimezone()
         backup_directory = self._database_path.parent / "backups"
         backup_directory.mkdir(parents=True, exist_ok=True)
@@ -210,7 +421,7 @@ class DesktopBridgeApp:
         backup_path = backup_directory / file_name
 
         self._connection.execute("PRAGMA wal_checkpoint(FULL)")
-        backup_connection = sqlite3.connect(backup_path)
+        backup_connection = sqlite3.connect(str(backup_path))
         try:
             self._connection.backup(backup_connection)
         finally:
@@ -223,8 +434,7 @@ class DesktopBridgeApp:
             "size_bytes": backup_path.stat().st_size,
         }
 
-    def export_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
-        label = self._normalize_file_label(payload.get("label"))
+    def _export_snapshot_file(self, label: str | None = None) -> dict[str, Any]:
         created_at = datetime.now().astimezone()
         export_directory = self._database_path.parent / "exports"
         export_directory.mkdir(parents=True, exist_ok=True)
@@ -252,14 +462,39 @@ class DesktopBridgeApp:
             "size_bytes": export_path.stat().st_size,
         }
 
-    def create_planning_target(self, payload: dict[str, Any]) -> Any:
-        target_gpa = str(payload["targetGpa"])
+    def _restore_database_from_backup(self, backup_path: Path) -> dict[str, Any]:
+        safeguard_backup = self._create_database_backup_file(label="pre-restore")
+        temp_restore_path = self._database_path.with_suffix(f"{self._database_path.suffix}.restore")
+
+        self.close()
+
+        try:
+            shutil.copy2(backup_path, temp_restore_path)
+            self._remove_sqlite_sidecars(self._database_path)
+            temp_restore_path.replace(self._database_path)
+            self._bootstrap_runtime()
+        except Exception as exc:
+            if temp_restore_path.exists():
+                temp_restore_path.unlink(missing_ok=True)
+            raise RuntimeError(
+                "从备份恢复失败。当前数据库已保留恢复前的安全备份，"
+                f"可使用 {safeguard_backup['path']} 手动回滚。原始错误：{exc}"
+            ) from exc
+
+        return {
+            "restored_from": str(backup_path),
+            "restored_at": datetime.now().astimezone(),
+            "safeguard_backup_path": safeguard_backup["path"],
+            "schema_version": self._schema_state.schema_version,
+        }
+
+    def _create_planning_target_impl(self, target_gpa: str) -> Any:
         target = self._planning_service.create_target(
             PlanningTargetCreateCommand(target_gpa=target_gpa)
         )
         return self._get_planning_target_payload(target.target_id)
 
-    def save_planning_expectations(self, payload: dict[str, Any]) -> Any:
+    def _save_planning_expectations_impl(self, payload: dict[str, Any]) -> Any:
         target_id = str(payload["targetId"])
         scenario_ids = {
             scenario.id for scenario in self._planning_scenario_repository.list_by_target_id(target_id)
@@ -290,7 +525,7 @@ class DesktopBridgeApp:
 
         return self._get_planning_target_payload(target_id)
 
-    def run_import(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _run_import_impl(self, payload: dict[str, Any]) -> dict[str, Any]:
         kind = str(payload["kind"]).upper()
         text = str(payload.get("text", ""))
         apply = bool(payload.get("apply", False))
@@ -371,7 +606,7 @@ class DesktopBridgeApp:
 
         raise ValueError(f"Unsupported import kind: {kind}")
 
-    def create_course(self, payload: dict[str, Any]) -> Any:
+    def _create_course_impl(self, payload: dict[str, Any]) -> Any:
         course = self._course_service.create_course(
             CourseCreateCommand(
                 name=str(payload["name"]),
@@ -386,7 +621,7 @@ class DesktopBridgeApp:
         )
         return self._get_course_view_payload(course.id)
 
-    def update_course(self, payload: dict[str, Any]) -> Any:
+    def _update_course_impl(self, payload: dict[str, Any]) -> Any:
         course = self._course_service.update_course(
             course_id=str(payload["courseId"]),
             command=CourseUpdateCommand(
@@ -402,12 +637,11 @@ class DesktopBridgeApp:
         )
         return self._get_course_view_payload(course.id)
 
-    def delete_course(self, payload: dict[str, Any]) -> dict[str, Any]:
-        course_id = str(payload["courseId"])
+    def _delete_course_impl(self, course_id: str) -> dict[str, Any]:
         self._course_service.delete_course(course_id)
         return {"deleted": True, "course_id": course_id}
 
-    def record_score(self, payload: dict[str, Any]) -> Any:
+    def _record_score_impl(self, payload: dict[str, Any]) -> Any:
         score_type_value = payload.get("scoreType")
         score_record = self._score_service.record_score(
             course_id=str(payload["courseId"]),
@@ -416,7 +650,7 @@ class DesktopBridgeApp:
         )
         return self._get_course_view_payload(score_record.course_id)
 
-    def clear_score(self, payload: dict[str, Any]) -> Any:
+    def _clear_score_impl(self, payload: dict[str, Any]) -> Any:
         score_record = self._score_service.clear_score(str(payload["courseId"]))
         return self._get_course_view_payload(score_record.course_id)
 
@@ -460,6 +694,68 @@ class DesktopBridgeApp:
 
         return result
 
+    def _run_logged_operation(
+        self,
+        *,
+        operation_type: str,
+        object_type: str,
+        object_summary: str,
+        success_message: str,
+        action: Callable[[], Any],
+        details_builder: Callable[[Any], dict[str, Any]] | None = None,
+    ) -> Any:
+        try:
+            result = action()
+        except Exception as exc:
+            self._safe_log_operation(
+                operation_type=operation_type,
+                object_type=object_type,
+                object_summary=object_summary,
+                status="FAILURE",
+                message=str(exc),
+            )
+            raise
+
+        self._safe_log_operation(
+            operation_type=operation_type,
+            object_type=object_type,
+            object_summary=object_summary,
+            status="SUCCESS",
+            message=success_message,
+            details=details_builder(result) if details_builder else None,
+        )
+        return result
+
+    def _safe_log_operation(
+        self,
+        *,
+        operation_type: str,
+        object_type: str,
+        object_summary: str,
+        status: str,
+        message: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        repository = getattr(self, "_operation_log_repository", None)
+        if repository is None or self._connection is None:
+            return
+
+        try:
+            repository.add(
+                OperationLogEntry(
+                    id=new_id(),
+                    operation_type=operation_type,
+                    object_type=object_type,
+                    object_summary=object_summary,
+                    status=status,
+                    message=message,
+                    created_at=datetime.now().astimezone(),
+                    details_json=OperationLogRepository.encode_details(details),
+                )
+            )
+        except Exception:
+            return
+
     @staticmethod
     def _resolve_database_path(database_path: str | Path | None) -> Path:
         if database_path:
@@ -472,16 +768,38 @@ class DesktopBridgeApp:
         return PROJECT_ROOT / "data" / "gpa_manager.sqlite3"
 
     @staticmethod
+    def _remove_sqlite_sidecars(database_path: Path) -> None:
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(f"{database_path}{suffix}")
+            if sidecar.exists():
+                sidecar.unlink(missing_ok=True)
+
+    @staticmethod
     def _normalize_file_label(value: Any) -> str:
         normalized = str(value or "").strip().lower().replace(" ", "-")
         return "".join(character for character in normalized if character.isalnum() or character in {"-", "_"})
+
+    @staticmethod
+    def _build_file_info(path: Path) -> dict[str, Any]:
+        stat = path.stat()
+        modified_at = datetime.fromtimestamp(stat.st_mtime).astimezone()
+        return {
+            "path": str(path.resolve()),
+            "file_name": path.name,
+            "created_at": modified_at,
+            "size_bytes": stat.st_size,
+        }
 
 
 def dispatch(app: DesktopBridgeApp, command: str, payload: dict[str, Any]) -> Any:
     commands = {
         "snapshot": lambda: app.snapshot(),
         "app.info": lambda: app.get_app_info(),
+        "system.health": lambda: app.get_startup_health(),
+        "operation.logs": lambda: app.list_operation_logs(payload),
         "data.backup": lambda: app.create_database_backup(payload),
+        "data.list_backups": lambda: app.list_database_backups(payload),
+        "data.restore_backup": lambda: app.restore_database_backup(payload),
         "data.export": lambda: app.export_snapshot(payload),
         "planning.create_target": lambda: app.create_planning_target(payload),
         "planning.save_expectations": lambda: app.save_planning_expectations(payload),
@@ -529,9 +847,10 @@ def main() -> None:
     parser.add_argument("--db", default=None, help="Optional SQLite database path")
     args = parser.parse_args()
 
-    payload = json.loads(args.payload or "{}")
-    app = DesktopBridgeApp(database_path=args.db)
+    app: DesktopBridgeApp | None = None
     try:
+        payload = json.loads(args.payload or "{}")
+        app = DesktopBridgeApp(database_path=args.db)
         result = dispatch(app, args.command, payload)
         print(
             json.dumps(
@@ -540,12 +859,15 @@ def main() -> None:
             )
         )
     except Exception as exc:  # pragma: no cover - bridge error path
+        message = str(exc)
+        if isinstance(exc, DatabaseMigrationError):
+            message = f"数据库初始化失败：{exc}"
         print(
             json.dumps(
                 {
                     "ok": False,
                     "error": {
-                        "message": str(exc),
+                        "message": message,
                         "code": exc.__class__.__name__,
                         "command": args.command,
                     },
@@ -555,8 +877,5 @@ def main() -> None:
         )
         raise SystemExit(1) from exc
     finally:
-        app.close()
-
-
-if __name__ == "__main__":
-    main()
+        if app is not None:
+            app.close()

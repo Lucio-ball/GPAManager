@@ -60,3 +60,15 @@ class ScenarioCourseExpectation:
     expected_grade_point: Decimal | None
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(slots=True)
+class OperationLogEntry:
+    id: str
+    operation_type: str
+    object_type: str
+    object_summary: str
+    status: str
+    message: str
+    created_at: datetime
+    details_json: str | None = None

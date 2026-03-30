@@ -1,5 +1,7 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
+  ArrowDown,
+  ArrowUp,
   Eraser,
   LoaderCircle,
   RefreshCw,
@@ -22,28 +24,73 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useLocalStorageState } from "@/hooks/use-local-storage-state";
 import {
   useClearScoreMutation,
   useRecordScoreMutation,
   useSnapshotQuery,
 } from "@/hooks/use-snapshot-query";
+import { useUnsavedChangesProtection } from "@/hooks/use-unsaved-changes-protection";
 import { formatDecimal } from "@/lib/format";
 import { gradeScoreOptions } from "@/lib/score";
 import type { CourseRecord, ScoreType, ScoreUpsertPayload } from "@/types/domain";
 
 type ScoreFilter = "all" | "pending" | "recorded";
 type ScoreSortKey = "name" | "semester" | "scoreType" | "status" | "rawScore" | "gradePoint";
+type ScoreTypeFilter = "all" | "PERCENTAGE" | "GRADE" | "unset";
 
 type ScoreFormState = {
   scoreType: ScoreType | null;
   rawScore: string;
 };
 
-function normalizeScoreFilter(value: string | null): ScoreFilter {
+type ScoreViewState = {
+  activeFilter: ScoreFilter;
+  searchText: string;
+  sortKey: ScoreSortKey;
+  sortDirection: SortDirection;
+  semesterFilter: string;
+  scoreTypeFilter: ScoreTypeFilter;
+};
+
+type ScoreDraftState = {
+  selectedCourseId: string | null;
+  form: ScoreFormState;
+};
+
+const SCORE_VIEW_STORAGE_KEY = "gpa-manager.desktop.score-view.v2";
+const SCORE_DRAFT_STORAGE_KEY = "gpa-manager.desktop.score-draft.v1";
+
+function normalizeScoreFilter(value: string | null | undefined): ScoreFilter {
   if (value === "all" || value === "recorded") {
     return value;
   }
   return "pending";
+}
+
+function normalizeScoreSortKey(value: string | null | undefined): ScoreSortKey {
+  if (
+    value === "name" ||
+    value === "semester" ||
+    value === "scoreType" ||
+    value === "status" ||
+    value === "rawScore" ||
+    value === "gradePoint"
+  ) {
+    return value;
+  }
+  return "semester";
+}
+
+function normalizeSortDirection(value: string | null | undefined): SortDirection {
+  return value === "asc" ? "asc" : "desc";
+}
+
+function normalizeScoreTypeFilter(value: string | null | undefined): ScoreTypeFilter {
+  if (value === "PERCENTAGE" || value === "GRADE" || value === "unset") {
+    return value;
+  }
+  return "all";
 }
 
 function toScoreForm(course: CourseRecord, defaultScoreType: ScoreType): ScoreFormState {
@@ -69,6 +116,10 @@ function getScoreFormError(form: ScoreFormState) {
   return null;
 }
 
+function scoreFormsEqual(left: ScoreFormState, right: ScoreFormState) {
+  return left.scoreType === right.scoreType && left.rawScore.trim() === right.rawScore.trim();
+}
+
 function matchesScoreFilter(course: CourseRecord, filter: ScoreFilter) {
   if (filter === "pending") {
     return !course.hasScore;
@@ -90,6 +141,20 @@ function matchesScoreSearch(course: CourseRecord, search: string) {
   );
 }
 
+function matchesSemester(course: CourseRecord, semester: string) {
+  return !semester || course.semester === semester;
+}
+
+function matchesScoreType(course: CourseRecord, filter: ScoreTypeFilter) {
+  if (filter === "all") {
+    return true;
+  }
+  if (filter === "unset") {
+    return course.scoreType === null;
+  }
+  return course.scoreType === filter;
+}
+
 function compareNullableText(left: string | null | undefined, right: string | null | undefined) {
   return (left ?? "").localeCompare(right ?? "", "zh-Hans-CN");
 }
@@ -101,11 +166,7 @@ function compareNullableNumber(left: string | null | undefined, right: string | 
   return leftValue - rightValue;
 }
 
-function sortScoreCourses(
-  courses: CourseRecord[],
-  key: ScoreSortKey,
-  direction: SortDirection,
-) {
+function sortScoreCourses(courses: CourseRecord[], key: ScoreSortKey, direction: SortDirection) {
   const ordered = [...courses].sort((left, right) => {
     const result =
       key === "name"
@@ -133,28 +194,60 @@ function sortScoreCourses(
   return ordered;
 }
 
+function getInitialViewState(searchParams: URLSearchParams, stored?: Partial<ScoreViewState>): ScoreViewState {
+  return {
+    activeFilter: normalizeScoreFilter(searchParams.get("filter") ?? stored?.activeFilter),
+    searchText: searchParams.get("q") ?? stored?.searchText ?? "",
+    sortKey: normalizeScoreSortKey(searchParams.get("sort") ?? stored?.sortKey),
+    sortDirection: normalizeSortDirection(searchParams.get("dir") ?? stored?.sortDirection),
+    semesterFilter: searchParams.get("semester") ?? stored?.semesterFilter ?? "",
+    scoreTypeFilter: normalizeScoreTypeFilter(searchParams.get("scoreType") ?? stored?.scoreTypeFilter),
+  };
+}
+
+function getAdjacentCourse(courses: CourseRecord[], currentId: string | null, offset: number) {
+  if (!courses.length) {
+    return null;
+  }
+
+  const currentIndex = currentId ? courses.findIndex((course) => course.id === currentId) : -1;
+  const nextIndex = currentIndex === -1 ? 0 : Math.min(courses.length - 1, Math.max(0, currentIndex + offset));
+  return courses[nextIndex] ?? null;
+}
+
 export function ScoreManagementPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { preferences } = useAppPreferences();
   const snapshotQuery = useSnapshotQuery();
   const recordScoreMutation = useRecordScoreMutation();
   const clearScoreMutation = useClearScoreMutation();
+  const [storedViewState, setStoredViewState] = useLocalStorageState<Partial<ScoreViewState>>(
+    SCORE_VIEW_STORAGE_KEY,
+    {},
+  );
+  const [storedDraftState, setStoredDraftState, clearStoredDraftState] = useLocalStorageState<ScoreDraftState | null>(
+    SCORE_DRAFT_STORAGE_KEY,
+    null,
+  );
 
   const courses = snapshotQuery.data?.courses ?? [];
   const completedCourses = useMemo(
     () => courses.filter((course) => course.status === "COMPLETED"),
     [courses],
   );
+  const semesterOptions = useMemo(
+    () => Array.from(new Set(completedCourses.map((course) => course.semester))).sort((left, right) =>
+      right.localeCompare(left, "zh-Hans-CN"),
+    ),
+    [completedCourses],
+  );
   const pendingCount = completedCourses.filter((course) => !course.hasScore).length;
   const recordedCount = completedCourses.filter((course) => course.hasScore).length;
 
-  const [activeFilter, setActiveFilter] = useState<ScoreFilter>(() =>
-    normalizeScoreFilter(searchParams.get("filter")),
+  const [viewState, setViewState] = useState<ScoreViewState>(() =>
+    getInitialViewState(searchParams, storedViewState),
   );
-  const [searchText, setSearchText] = useState("");
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<ScoreSortKey>("semester");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [form, setForm] = useState<ScoreFormState>({
     scoreType: preferences.defaultScoreType,
     rawScore: "",
@@ -163,28 +256,93 @@ export function ScoreManagementPage() {
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const percentageInputRef = useRef<HTMLInputElement>(null);
   const gradeSelectRef = useRef<HTMLSelectElement>(null);
+  const draftHydratedRef = useRef(false);
 
-  const deferredSearch = useDeferredValue(searchText.trim());
+  const deferredSearch = useDeferredValue(viewState.searchText.trim());
   const filteredCourses = useMemo(
     () =>
       sortScoreCourses(
         completedCourses.filter(
           (course) =>
-            matchesScoreFilter(course, activeFilter) && matchesScoreSearch(course, deferredSearch),
+            matchesScoreFilter(course, viewState.activeFilter) &&
+            matchesScoreSearch(course, deferredSearch) &&
+            matchesSemester(course, viewState.semesterFilter) &&
+            matchesScoreType(course, viewState.scoreTypeFilter),
         ),
-        sortKey,
-        sortDirection,
+        viewState.sortKey,
+        viewState.sortDirection,
       ),
-    [activeFilter, completedCourses, deferredSearch, sortDirection, sortKey],
+    [completedCourses, deferredSearch, viewState],
   );
   const selectedCourse = completedCourses.find((course) => course.id === selectedCourseId) ?? null;
+  const defaultForm = useMemo(
+    () => ({ scoreType: preferences.defaultScoreType, rawScore: "" }),
+    [preferences.defaultScoreType],
+  );
+  const baselineForm = selectedCourse ? toScoreForm(selectedCourse, preferences.defaultScoreType) : defaultForm;
+  const hasUnsavedChanges = !scoreFormsEqual(form, baselineForm);
+  const { confirmDiscardChanges } = useUnsavedChangesProtection(
+    hasUnsavedChanges,
+    "当前成绩表单还有未保存修改，离开后会丢失。确定继续吗？",
+  );
   const isSaving = recordScoreMutation.isPending;
+
+  useEffect(() => {
+    setStoredViewState(viewState);
+  }, [setStoredViewState, viewState]);
+
+  useEffect(() => {
+    const nextParams = new URLSearchParams();
+    if (viewState.activeFilter !== "pending") {
+      nextParams.set("filter", viewState.activeFilter);
+    }
+    if (viewState.searchText.trim()) {
+      nextParams.set("q", viewState.searchText.trim());
+    }
+    if (viewState.sortKey !== "semester") {
+      nextParams.set("sort", viewState.sortKey);
+    }
+    if (viewState.sortDirection !== "desc") {
+      nextParams.set("dir", viewState.sortDirection);
+    }
+    if (viewState.semesterFilter) {
+      nextParams.set("semester", viewState.semesterFilter);
+    }
+    if (viewState.scoreTypeFilter !== "all") {
+      nextParams.set("scoreType", viewState.scoreTypeFilter);
+    }
+    setSearchParams(nextParams, { replace: true });
+  }, [setSearchParams, viewState]);
 
   useEffect(() => {
     if (selectedCourseId && !completedCourses.some((course) => course.id === selectedCourseId)) {
       setSelectedCourseId(null);
     }
   }, [completedCourses, selectedCourseId]);
+
+  useEffect(() => {
+    if (draftHydratedRef.current || snapshotQuery.isLoading) {
+      return;
+    }
+
+    if (storedDraftState?.selectedCourseId) {
+      const draftCourse = completedCourses.find((course) => course.id === storedDraftState.selectedCourseId);
+      if (draftCourse) {
+        setSelectedCourseId(draftCourse.id);
+        setForm(storedDraftState.form);
+        setFormError("已恢复上次未保存的成绩草稿。");
+        draftHydratedRef.current = true;
+        return;
+      }
+    }
+
+    if (completedCourses.length) {
+      const preferred = completedCourses.find((course) => !course.hasScore) ?? completedCourses[0];
+      setSelectedCourseId(preferred.id);
+      setForm(toScoreForm(preferred, preferences.defaultScoreType));
+    }
+    draftHydratedRef.current = true;
+  }, [completedCourses, preferences.defaultScoreType, snapshotQuery.isLoading, storedDraftState]);
 
   useEffect(() => {
     if (!selectedCourseId && completedCourses.length) {
@@ -195,31 +353,90 @@ export function ScoreManagementPage() {
 
   useEffect(() => {
     if (selectedCourse) {
-      setForm(toScoreForm(selectedCourse, preferences.defaultScoreType));
+      if (!hasUnsavedChanges) {
+        setForm(toScoreForm(selectedCourse, preferences.defaultScoreType));
+      }
       setFormError(null);
       window.requestAnimationFrame(() => {
-        if ((selectedCourse.scoreType ?? preferences.defaultScoreType) === "GRADE") {
+        if ((form.scoreType ?? selectedCourse.scoreType ?? preferences.defaultScoreType) === "GRADE") {
           gradeSelectRef.current?.focus();
         } else {
           percentageInputRef.current?.focus();
         }
       });
     }
-  }, [preferences.defaultScoreType, selectedCourse]);
+  }, [hasUnsavedChanges, preferences.defaultScoreType, selectedCourse, form.scoreType]);
 
-  function handleToggleSort(key: ScoreSortKey) {
-    if (sortKey === key) {
-      setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+  useEffect(() => {
+    if (hasUnsavedChanges && selectedCourseId) {
+      setStoredDraftState({ selectedCourseId, form });
       return;
     }
-    setSortKey(key);
-    setSortDirection(key === "name" ? "asc" : "desc");
+
+    clearStoredDraftState();
+  }, [clearStoredDraftState, form, hasUnsavedChanges, selectedCourseId, setStoredDraftState]);
+
+  useEffect(() => {
+    if (!selectedCourseId) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      document.getElementById(`score-row-${selectedCourseId}`)?.scrollIntoView({
+        block: "nearest",
+        behavior: "smooth",
+      });
+    });
+  }, [filteredCourses, selectedCourseId]);
+
+  function updateViewState(patch: Partial<ScoreViewState>) {
+    setViewState((current) => ({ ...current, ...patch }));
+  }
+
+  function handleToggleSort(key: ScoreSortKey) {
+    updateViewState(
+      viewState.sortKey === key
+        ? { sortDirection: viewState.sortDirection === "asc" ? "desc" : "asc" }
+        : {
+            sortKey: key,
+            sortDirection: key === "name" ? "asc" : "desc",
+          },
+    );
   }
 
   function handleSelectCourse(course: CourseRecord) {
+    if (selectedCourseId === course.id) {
+      return;
+    }
+    if (!confirmDiscardChanges()) {
+      return;
+    }
+
     setSelectedCourseId(course.id);
     setForm(toScoreForm(course, preferences.defaultScoreType));
     setFormError(null);
+  }
+
+  function handleResetCurrentForm(force = false) {
+    if (!selectedCourse) {
+      setForm(defaultForm);
+      return;
+    }
+
+    if (!force && hasUnsavedChanges && !confirmDiscardChanges()) {
+      return;
+    }
+
+    setForm(toScoreForm(selectedCourse, preferences.defaultScoreType));
+    setFormError(null);
+  }
+
+  function selectAdjacentCourse(offset: number) {
+    const adjacent = getAdjacentCourse(filteredCourses, selectedCourseId, offset);
+    if (!adjacent || adjacent.id === selectedCourseId) {
+      return;
+    }
+    handleSelectCourse(adjacent);
   }
 
   function handleSave() {
@@ -241,16 +458,19 @@ export function ScoreManagementPage() {
       rawScore: form.rawScore.trim(),
       scoreType: form.scoreType,
     };
-    const nextPendingCourse =
-      preferences.autoSelectNextPendingScore && !selectedCourse.hasScore
-        ? completedCourses.find((course) => course.id !== selectedCourse.id && !course.hasScore)
+
+    const currentIndex = filteredCourses.findIndex((course) => course.id === selectedCourse.id);
+    const nextVisiblePendingCourse =
+      preferences.autoSelectNextPendingScore && currentIndex >= 0
+        ? filteredCourses.slice(currentIndex + 1).find((course) => !course.hasScore) ??
+          filteredCourses.slice(0, currentIndex).find((course) => !course.hasScore)
         : null;
 
     recordScoreMutation.mutate(payload, {
       onSuccess: (course) => {
-        if (nextPendingCourse) {
-          setSelectedCourseId(nextPendingCourse.id);
-          setForm(toScoreForm(nextPendingCourse, preferences.defaultScoreType));
+        if (nextVisiblePendingCourse && nextVisiblePendingCourse.id !== course.id) {
+          setSelectedCourseId(nextVisiblePendingCourse.id);
+          setForm(toScoreForm(nextVisiblePendingCourse, preferences.defaultScoreType));
           return;
         }
 
@@ -281,13 +501,47 @@ export function ScoreManagementPage() {
     });
   }
 
+  function handleEditorKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    const tagName = target.tagName;
+
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      handleSave();
+      return;
+    }
+
+    if (event.key === "Enter" && tagName === "INPUT") {
+      event.preventDefault();
+      handleSave();
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      handleResetCurrentForm();
+      return;
+    }
+
+    if (event.key === "ArrowDown" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      selectAdjacentCourse(1);
+      return;
+    }
+
+    if (event.key === "ArrowUp" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      selectAdjacentCourse(-1);
+    }
+  }
+
   const inlineValidation = getScoreFormError(form);
 
   return (
     <div className="flex flex-col gap-6">
       <PageHero
         eyebrow="Score Workspace"
-        title="成绩页现在更适合连续补录：支持排序、默认成绩类型和保存后自动跳下一门待录入课程。"
+        title="成绩页现在更适合连续补录：组合筛选记忆、上下门切换、快捷保存和草稿恢复都围绕高频录入展开。"
         description="左侧用于真实成绩录入，右侧用于搜索、筛选和排序。这样既能优先处理待录入课程，也能快速回头修改已录入成绩。"
         actions={
           <>
@@ -307,16 +561,22 @@ export function ScoreManagementPage() {
         }
       />
 
-      <section className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
+      {hasUnsavedChanges ? (
+        <InlineMessage tone="warning">
+          当前成绩表单还有未保存内容。切换课程、切页或关闭窗口前都会再次确认，并且草稿会自动恢复。
+        </InlineMessage>
+      ) : null}
+
+      <section className="grid gap-6 xl:grid-cols-[390px_minmax(0,1fr)]">
         <Card className="relative overflow-hidden">
           <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/60 to-transparent" />
           <CardHeader>
             <CardTitle>成绩录入工作台</CardTitle>
             <CardDescription>
-              选择已修课程后，可以录入、修改或清空真实成绩。保存后 GPA、规划基线和首页指标会一起刷新。
+              Enter 直接保存，Ctrl+Enter 也可保存，Ctrl+方向键切换上一门/下一门，Esc 恢复到已保存状态。
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-4">
+          <CardContent className="flex flex-col gap-4" onKeyDown={handleEditorKeyDown}>
             {formError ? <InlineMessage tone="error">{formError}</InlineMessage> : null}
 
             {snapshotQuery.isLoading ? (
@@ -437,24 +697,38 @@ export function ScoreManagementPage() {
                 清空成绩
               </Button>
             </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Button variant="secondary" onClick={() => selectAdjacentCourse(-1)} disabled={!filteredCourses.length}>
+                <ArrowUp data-icon="inline-start" />
+                上一门
+              </Button>
+              <Button variant="secondary" onClick={() => selectAdjacentCourse(1)} disabled={!filteredCourses.length}>
+                <ArrowDown data-icon="inline-start" />
+                下一门
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
-        <Tabs value={activeFilter} onValueChange={(value) => setActiveFilter(value as ScoreFilter)}>
+        <Tabs
+          value={viewState.activeFilter}
+          onValueChange={(value) => updateViewState({ activeFilter: value as ScoreFilter })}
+        >
           <TabsList>
             <TabsTrigger value="pending">待录入 {pendingCount}</TabsTrigger>
             <TabsTrigger value="recorded">已录入 {recordedCount}</TabsTrigger>
             <TabsTrigger value="all">全部 {completedCourses.length}</TabsTrigger>
           </TabsList>
 
-          <TabsContent value={activeFilter}>
+          <TabsContent value={viewState.activeFilter}>
             <Card>
               <CardHeader className="gap-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <div>
                     <CardTitle>成绩课程表</CardTitle>
                     <CardDescription>
-                      支持按待录入、已录入切换，也支持按课程名、学期、绩点等字段排序。
+                      搜索、录入状态、学期、成绩类型和排序可以组合使用，最近一次视图会自动记忆。
                     </CardDescription>
                   </div>
                   <div className="rounded-full border border-white/8 bg-white/[0.04] px-3 py-1 text-xs text-muted-foreground">
@@ -462,20 +736,80 @@ export function ScoreManagementPage() {
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-3 sm:flex-row">
-                  <div className="relative flex-1">
-                    <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      value={searchText}
-                      onChange={(event) => setSearchText(event.target.value)}
-                      placeholder="搜索课程名称、学期或原始成绩"
-                      className="pl-11"
-                    />
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-3 sm:flex-row">
+                    <div className="relative flex-1">
+                      <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        value={viewState.searchText}
+                        onChange={(event) => updateViewState({ searchText: event.target.value })}
+                        placeholder="搜索课程名称、学期或原始成绩"
+                        className="pl-11"
+                      />
+                    </div>
+                    <Button
+                      variant="outline"
+                      onClick={() =>
+                        updateViewState({
+                          activeFilter: "pending",
+                          searchText: "",
+                          semesterFilter: "",
+                          scoreTypeFilter: "all",
+                        })
+                      }
+                      disabled={
+                        viewState.activeFilter === "pending" &&
+                        !viewState.searchText &&
+                        !viewState.semesterFilter &&
+                        viewState.scoreTypeFilter === "all"
+                      }
+                    >
+                      <X data-icon="inline-start" />
+                      清空筛选
+                    </Button>
                   </div>
-                  <Button variant="outline" onClick={() => setSearchText("")} disabled={!searchText}>
-                    <X data-icon="inline-start" />
-                    清空搜索
-                  </Button>
+
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <label className="flex flex-col gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                        学期
+                      </span>
+                      <Select
+                        value={viewState.semesterFilter}
+                        onChange={(event) => updateViewState({ semesterFilter: event.target.value })}
+                      >
+                        <option value="">全部学期</option>
+                        {semesterOptions.map((semester) => (
+                          <option key={semester} value={semester}>
+                            {semester}
+                          </option>
+                        ))}
+                      </Select>
+                    </label>
+
+                    <label className="flex flex-col gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                        成绩类型
+                      </span>
+                      <Select
+                        value={viewState.scoreTypeFilter}
+                        onChange={(event) =>
+                          updateViewState({
+                            scoreTypeFilter: normalizeScoreTypeFilter(event.target.value),
+                          })
+                        }
+                      >
+                        <option value="all">全部类型</option>
+                        <option value="PERCENTAGE">百分制</option>
+                        <option value="GRADE">等级制</option>
+                        <option value="unset">未设置</option>
+                      </Select>
+                    </label>
+
+                    <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-3 text-sm leading-6 text-muted-foreground">
+                      过滤条件和排序会在本地保存，下次回到成绩页时可直接延续上一次的工作上下文。
+                    </div>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
@@ -513,38 +847,38 @@ export function ScoreManagementPage() {
                       <TableRow>
                         <SortHeader
                           label="课程"
-                          active={sortKey === "name"}
-                          direction={sortDirection}
+                          active={viewState.sortKey === "name"}
+                          direction={viewState.sortDirection}
                           onToggle={() => handleToggleSort("name")}
                         />
                         <SortHeader
                           label="学期"
-                          active={sortKey === "semester"}
-                          direction={sortDirection}
+                          active={viewState.sortKey === "semester"}
+                          direction={viewState.sortDirection}
                           onToggle={() => handleToggleSort("semester")}
                         />
                         <SortHeader
                           label="成绩类型"
-                          active={sortKey === "scoreType"}
-                          direction={sortDirection}
+                          active={viewState.sortKey === "scoreType"}
+                          direction={viewState.sortDirection}
                           onToggle={() => handleToggleSort("scoreType")}
                         />
                         <SortHeader
                           label="状态"
-                          active={sortKey === "status"}
-                          direction={sortDirection}
+                          active={viewState.sortKey === "status"}
+                          direction={viewState.sortDirection}
                           onToggle={() => handleToggleSort("status")}
                         />
                         <SortHeader
                           label="原始成绩"
-                          active={sortKey === "rawScore"}
-                          direction={sortDirection}
+                          active={viewState.sortKey === "rawScore"}
+                          direction={viewState.sortDirection}
                           onToggle={() => handleToggleSort("rawScore")}
                         />
                         <SortHeader
                           label="绩点"
-                          active={sortKey === "gradePoint"}
-                          direction={sortDirection}
+                          active={viewState.sortKey === "gradePoint"}
+                          direction={viewState.sortDirection}
                           onToggle={() => handleToggleSort("gradePoint")}
                         />
                         <TableHead className="w-[120px]">操作</TableHead>
@@ -555,7 +889,7 @@ export function ScoreManagementPage() {
                         const isActive = selectedCourseId === course.id;
 
                         return (
-                          <TableRow key={course.id} className={isActive ? "bg-white/[0.05]" : ""}>
+                          <TableRow key={course.id} id={`score-row-${course.id}`} className={isActive ? "bg-white/[0.05]" : ""}>
                             <TableCell className="font-medium text-foreground">{course.name}</TableCell>
                             <TableCell>{course.semester}</TableCell>
                             <TableCell>
@@ -592,10 +926,14 @@ export function ScoreManagementPage() {
                     </div>
                     <Button
                       variant="secondary"
-                      onClick={() => {
-                        setSearchText("");
-                        setActiveFilter("all");
-                      }}
+                      onClick={() =>
+                        updateViewState({
+                          activeFilter: "all",
+                          searchText: "",
+                          semesterFilter: "",
+                          scoreTypeFilter: "all",
+                        })
+                      }
                     >
                       清空筛选
                     </Button>

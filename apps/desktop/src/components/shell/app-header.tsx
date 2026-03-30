@@ -1,8 +1,12 @@
-import { Database, HardDriveDownload, Sparkles } from "lucide-react";
+import { Database, HardDriveDownload, ShieldCheck, Sparkles } from "lucide-react";
+import { useStartupHealthQuery } from "@/hooks/use-snapshot-query";
 import { SettingsDialog } from "@/components/shared/settings-dialog";
 import { Badge } from "@/components/ui/badge";
 
 export function AppHeader() {
+  const startupHealthQuery = useStartupHealthQuery();
+  const startupStatus = startupHealthQuery.data?.status;
+
   return (
     <header className="sticky top-0 z-20 border-b border-white/6 bg-background/80 backdrop-blur-xl">
       <div className="mx-auto flex w-full max-w-[1480px] items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-10">
@@ -17,6 +21,23 @@ export function AppHeader() {
         </div>
         <div className="flex items-center gap-2">
           <SettingsDialog />
+          <Badge
+            variant={
+              startupHealthQuery.isError
+                ? "destructive"
+                : startupStatus === "PASS"
+                  ? "success"
+                  : "warning"
+            }
+            className="gap-2"
+          >
+            <ShieldCheck className="size-3.5" />
+            {startupHealthQuery.isError
+              ? "自检异常"
+              : startupStatus === "PASS"
+                ? "启动已自检"
+                : "自检处理中"}
+          </Badge>
           <Badge variant="outline" className="gap-2">
             <Database className="size-3.5" />
             SQLite

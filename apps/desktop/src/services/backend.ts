@@ -8,11 +8,14 @@ import type {
   CourseUpsertPayload,
   DataBackupResult,
   DataExportResult,
+  DataRestoreResult,
   ImportKind,
   ImportWorkbenchResult,
+  OperationLogRecord,
   PlanningExpectationSavePayload,
   PlanningTargetResult,
   ScoreUpsertPayload,
+  StartupHealthReport,
 } from "@/types/domain";
 
 export const desktopApi = {
@@ -20,8 +23,24 @@ export const desktopApi = {
     return invokeBridge<AppInfo>("app.info", undefined, () => mockDesktopApi.getAppInfo());
   },
 
+  async getStartupHealth(): Promise<StartupHealthReport> {
+    return invokeBridge<StartupHealthReport>(
+      "system.health",
+      undefined,
+      () => mockDesktopApi.getStartupHealth(),
+    );
+  },
+
   async getSnapshot(): Promise<AppSnapshot> {
     return invokeBridge<AppSnapshot>("snapshot", undefined, () => mockDesktopApi.getSnapshot());
+  },
+
+  async getRecentOperationLogs(limit = 12): Promise<OperationLogRecord[]> {
+    return invokeBridge<OperationLogRecord[]>(
+      "operation.logs",
+      { limit },
+      () => mockDesktopApi.getRecentOperationLogs(limit),
+    );
   },
 
   async createDatabaseBackup(label?: string): Promise<DataBackupResult> {
@@ -29,6 +48,22 @@ export const desktopApi = {
       "data.backup",
       { label },
       () => mockDesktopApi.createDatabaseBackup(label),
+    );
+  },
+
+  async listDatabaseBackups(limit = 12): Promise<DataBackupResult[]> {
+    return invokeBridge<DataBackupResult[]>(
+      "data.list_backups",
+      { limit },
+      () => mockDesktopApi.listDatabaseBackups(limit),
+    );
+  },
+
+  async restoreDatabaseBackup(backupPath: string): Promise<DataRestoreResult> {
+    return invokeBridge<DataRestoreResult>(
+      "data.restore_backup",
+      { backupPath, confirmed: true },
+      () => mockDesktopApi.restoreDatabaseBackup(backupPath),
     );
   },
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   Calculator,
   Clock3,
@@ -18,14 +18,24 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useLocalStorageState } from "@/hooks/use-local-storage-state";
 import {
   useCreatePlanningTargetMutation,
   useSavePlanningExpectationsMutation,
   useSnapshotQuery,
 } from "@/hooks/use-snapshot-query";
+import { useUnsavedChangesProtection } from "@/hooks/use-unsaved-changes-protection";
 import { formatCredit, formatDateTime, formatDecimal, formatScenarioLabel } from "@/lib/format";
 import { gradeScoreOptions } from "@/lib/score";
 import type { CourseRecord, PlanningExpectationSavePayload, PlanningTargetResult } from "@/types/domain";
+
+type PlanningDraftState = {
+  targetId: string | null;
+  targetGpa: string;
+  drafts: Record<string, string>;
+};
+
+const PLANNING_DRAFT_STORAGE_KEY = "gpa-manager.desktop.planning-draft.v1";
 
 function makeDraftKey(scenarioId: string, courseId: string) {
   return `${scenarioId}:${courseId}`;
@@ -58,6 +68,8 @@ export function PlanningPage() {
   const { data, isFetching, refetch } = useSnapshotQuery();
   const createPlanningTargetMutation = useCreatePlanningTargetMutation();
   const savePlanningExpectationsMutation = useSavePlanningExpectationsMutation();
+  const [storedPlanningDraft, setStoredPlanningDraft, clearStoredPlanningDraft] =
+    useLocalStorageState<PlanningDraftState | null>(PLANNING_DRAFT_STORAGE_KEY, null);
   const savedPlanningRef = useRef<HTMLDivElement | null>(null);
   const lastHydratedPlanningKeyRef = useRef<string | null>(null);
 
@@ -108,6 +120,10 @@ export function PlanningPage() {
 
   const isTargetDirty = planning ? normalizeDraftValue(targetGpa) !== planning.targetGpa : false;
   const hasUnsavedChanges = isTargetDirty || dirtySummary.changedExpectationCount > 0;
+  const { confirmDiscardChanges } = useUnsavedChangesProtection(
+    hasUnsavedChanges,
+    "当前规划还有未保存草稿，离开后会丢失。确定继续吗？",
+  );
   const planningKey = planning ? `${planning.targetId}:${planning.lastUpdatedAt}` : "empty";
   const focusSavedPlanning = searchParams.get("focus") === "saved";
 
@@ -120,13 +136,34 @@ export function PlanningPage() {
     const previousTargetId = previousKey?.split(":")[0] ?? null;
     const currentTargetId = planning?.targetId ?? null;
     const shouldHydrate = previousKey === null || previousTargetId !== currentTargetId || !hasUnsavedChanges;
+    const hasStoredDraft =
+      storedPlanningDraft &&
+      storedPlanningDraft.targetId === currentTargetId &&
+      (normalizeDraftValue(storedPlanningDraft.targetGpa) ||
+        Object.keys(storedPlanningDraft.drafts).length > 0);
 
     if (!planning) {
+      if (storedPlanningDraft && storedPlanningDraft.targetId === null) {
+        setTargetGpa(storedPlanningDraft.targetGpa);
+        setDrafts(storedPlanningDraft.drafts);
+        setFormError(null);
+        lastHydratedPlanningKeyRef.current = planningKey;
+        return;
+      }
+
       if (shouldHydrate) {
         setTargetGpa("3.820");
         setDrafts({});
         setFormError(null);
       }
+      lastHydratedPlanningKeyRef.current = planningKey;
+      return;
+    }
+
+    if (hasStoredDraft) {
+      setTargetGpa(storedPlanningDraft.targetGpa);
+      setDrafts(storedPlanningDraft.drafts);
+      setFormError(null);
       lastHydratedPlanningKeyRef.current = planningKey;
       return;
     }
@@ -137,7 +174,27 @@ export function PlanningPage() {
       setFormError(null);
       lastHydratedPlanningKeyRef.current = planningKey;
     }
-  }, [hasUnsavedChanges, planning, planningKey]);
+  }, [hasUnsavedChanges, planning, planningKey, storedPlanningDraft]);
+
+  useEffect(() => {
+    if (hasUnsavedChanges) {
+      setStoredPlanningDraft({
+        targetId: planning?.targetId ?? null,
+        targetGpa,
+        drafts,
+      });
+      return;
+    }
+
+    clearStoredPlanningDraft();
+  }, [
+    clearStoredPlanningDraft,
+    drafts,
+    hasUnsavedChanges,
+    planning?.targetId,
+    setStoredPlanningDraft,
+    targetGpa,
+  ]);
 
   useEffect(() => {
     if (!focusSavedPlanning || !planning || !savedPlanningRef.current) {
@@ -162,6 +219,7 @@ export function PlanningPage() {
       onSuccess: (result) => {
         setTargetGpa(result.targetGpa);
         setDrafts(buildExpectationDrafts(result));
+        clearStoredPlanningDraft();
         lastHydratedPlanningKeyRef.current = `${result.targetId}:${result.lastUpdatedAt}`;
       },
       onError: (error) => {
@@ -210,6 +268,7 @@ export function PlanningPage() {
     savePlanningExpectationsMutation.mutate(payload, {
       onSuccess: (result) => {
         setDrafts(buildExpectationDrafts(result));
+        clearStoredPlanningDraft();
         lastHydratedPlanningKeyRef.current = `${result.targetId}:${result.lastUpdatedAt}`;
       },
       onError: (error) => {
@@ -218,15 +277,46 @@ export function PlanningPage() {
     });
   };
 
-  const restoreSavedPlanning = () => {
+  const restoreSavedPlanning = (force = false) => {
     if (!planning) {
+      return;
+    }
+
+    if (!force && hasUnsavedChanges && !confirmDiscardChanges()) {
       return;
     }
 
     setTargetGpa(planning.targetGpa);
     setDrafts(buildExpectationDrafts(planning));
     setFormError(null);
+    clearStoredPlanningDraft();
     lastHydratedPlanningKeyRef.current = `${planning.targetId}:${planning.lastUpdatedAt}`;
+  };
+
+  const handlePlanningKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      if (planning) {
+        handleSaveExpectations();
+      } else {
+        handleCreateTarget();
+      }
+      return;
+    }
+
+    if (event.key === "Escape" && hasUnsavedChanges) {
+      event.preventDefault();
+      if (planning) {
+        restoreSavedPlanning();
+        return;
+      }
+      if (confirmDiscardChanges()) {
+        setTargetGpa("3.820");
+        setDrafts({});
+        setFormError(null);
+        clearStoredPlanningDraft();
+      }
+    }
   };
 
   return (
@@ -255,6 +345,11 @@ export function PlanningPage() {
                 } 个情景单元格与最近一次保存结果不同。下方三情景结果仍然展示最近一次已保存结果。`
               : "当前编辑区已与最近一次保存结果同步，可以继续查看历史结论，也可以直接开始下一轮调整。"}
           </InlineMessage>
+          {storedPlanningDraft && hasUnsavedChanges ? (
+            <InlineMessage tone="neutral">
+              当前草稿已写入本地缓存。即使误切页或关闭窗口，下次回到规划页也会自动恢复。
+            </InlineMessage>
+          ) : null}
           {partialScenarios.length ? (
             <InlineMessage tone="warning">
               最近一次保存结果里仍有 {partialScenarios.length} 个情景未覆盖全部未修课程，相关模拟值只代表已填写课程范围。
@@ -314,7 +409,7 @@ export function PlanningPage() {
                     />
                   </div>
 
-                  <Button variant="secondary" onClick={restoreSavedPlanning} disabled={!hasUnsavedChanges}>
+                  <Button variant="secondary" onClick={() => restoreSavedPlanning()} disabled={!hasUnsavedChanges}>
                     <RotateCcw data-icon="inline-start" />
                     恢复到最近保存结果
                   </Button>
@@ -335,12 +430,18 @@ export function PlanningPage() {
               这里承载新的目标输入和本地草稿。只有在你明确点击保存或重建后，历史规划结果才会被更新。
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <CardContent className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]" onKeyDown={handlePlanningKeyDown}>
             <div className="flex flex-col gap-4">
               <Field label="Target GPA">
                 <Input
                   value={targetGpa}
                   onChange={(event) => setTargetGpa(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      handleCreateTarget();
+                    }
+                  }}
                   placeholder="例如：3.820"
                 />
               </Field>
@@ -485,7 +586,7 @@ export function PlanningPage() {
             </div>
             <div className="flex flex-wrap items-center gap-3">
               {planning ? (
-                <Button variant="secondary" onClick={restoreSavedPlanning} disabled={!hasUnsavedChanges}>
+                <Button variant="secondary" onClick={() => restoreSavedPlanning()} disabled={!hasUnsavedChanges}>
                   <RotateCcw data-icon="inline-start" />
                   放弃本地草稿
                 </Button>
@@ -501,7 +602,7 @@ export function PlanningPage() {
             </div>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent onKeyDown={handlePlanningKeyDown}>
           {planning && plannedCourses.length ? (
             <Table>
               <TableHeader>

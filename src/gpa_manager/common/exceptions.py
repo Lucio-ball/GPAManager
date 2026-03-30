@@ -15,3 +15,7 @@ class NotFoundError(GpaManagerError):
 
 class DuplicateCourseError(GpaManagerError):
     """Raised when a course would duplicate an existing course name/semester pair."""
+
+
+class DatabaseMigrationError(GpaManagerError):
+    """Raised when the local SQLite database cannot be safely initialized or migrated."""

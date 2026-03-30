@@ -8,6 +8,7 @@ export type AppInfo = {
   dataDirectory: string;
   backupDirectory: string;
   exportDirectory: string;
+  schemaVersion: number;
 };
 
 export type DataBackupResult = {
@@ -17,12 +18,48 @@ export type DataBackupResult = {
   sizeBytes: number;
 };
 
+export type DataRestoreResult = {
+  restoredFrom: string;
+  restoredAt: string;
+  safeguardBackupPath: string;
+  schemaVersion: number;
+};
+
 export type DataExportResult = {
   path: string;
   fileName: string;
   createdAt: string;
   recordCount: number;
   sizeBytes: number;
+};
+
+export type StartupCheckStatus = "PASS" | "FAIL";
+
+export type StartupCheckItem = {
+  key: string;
+  label: string;
+  status: StartupCheckStatus;
+  detail: string;
+  hint: string;
+};
+
+export type StartupHealthReport = {
+  checkedAt: string;
+  status: StartupCheckStatus;
+  summary: string;
+  schemaVersion: number;
+  items: StartupCheckItem[];
+};
+
+export type OperationLogRecord = {
+  id: string;
+  operationType: string;
+  objectType: string;
+  objectSummary: string;
+  status: "SUCCESS" | "FAILURE";
+  message: string;
+  createdAt: string;
+  detailsJson: string | null;
 };
 
 export type CourseUpsertPayload = {

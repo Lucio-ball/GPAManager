@@ -6,10 +6,12 @@ import type {
   CourseUpsertPayload,
   DataBackupResult,
   DataExportResult,
+  DataRestoreResult,
   GpaSummary,
   ImportKind,
   ImportTemplateDefinition,
   ImportWorkbenchResult,
+  OperationLogRecord,
   PlanningExpectationSavePayload,
   PlanningScenarioExpectation,
   PlanningScenarioResult,
@@ -17,6 +19,7 @@ import type {
   ScenarioType,
   ScoreType,
   ScoreUpsertPayload,
+  StartupHealthReport,
 } from "@/types/domain";
 
 const GRADE_POINT_LABELS = {
@@ -56,8 +59,45 @@ type PlanningBaseline = {
   plannedCreditSum: number;
 };
 
+const mockBackups: DataBackupResult[] = [];
+const mockBackupSnapshots = new Map<string, MockState>();
+const mockOperationLogs: OperationLogRecord[] = [
+  {
+    id: "mock-log-1",
+    operationType: "system.health",
+    objectType: "self_check",
+    objectSummary: "启动自检",
+    status: "SUCCESS",
+    message: "Mock 桌面环境已通过启动自检。",
+    createdAt: new Date().toISOString(),
+    detailsJson: null,
+  },
+];
+
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function pushMockLog(
+  operationType: string,
+  objectType: string,
+  objectSummary: string,
+  status: "SUCCESS" | "FAILURE",
+  message: string,
+) {
+  mockOperationLogs.unshift({
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    operationType,
+    objectType,
+    objectSummary,
+    status,
+    message,
+    createdAt: new Date().toISOString(),
+    detailsJson: null,
+  });
+  if (mockOperationLogs.length > 20) {
+    mockOperationLogs.length = 20;
+  }
 }
 
 function formatFixed(value: number, digits: number) {
@@ -853,33 +893,103 @@ export const mockDesktopApi = {
       dataDirectory: MOCK_DATA_DIRECTORY,
       backupDirectory: `${MOCK_DATA_DIRECTORY}/backups`,
       exportDirectory: `${MOCK_DATA_DIRECTORY}/exports`,
+      schemaVersion: 2,
+    };
+  },
+  getStartupHealth(): StartupHealthReport {
+    return {
+      checkedAt: new Date().toISOString(),
+      status: "PASS",
+      summary: "Mock 桌面环境启动自检通过，数据库路径、应用数据目录、关键依赖和核心表均视为可用。",
+      schemaVersion: 2,
+      items: [
+        {
+          key: "database-file",
+          label: "数据库文件",
+          status: "PASS",
+          detail: `数据库文件可访问：${MOCK_DATA_DIRECTORY}/gpa_manager.sqlite3`,
+          hint: "这是浏览器 mock 数据源，用于保持前端交互演示完整。",
+        },
+        {
+          key: "data-directory",
+          label: "应用数据目录",
+          status: "PASS",
+          detail: `应用数据目录可写：${MOCK_DATA_DIRECTORY}`,
+          hint: "真实桌面端会在应用数据目录下持久化数据库、备份和导出文件。",
+        },
+        {
+          key: "python-bridge",
+          label: "Python Bridge 依赖",
+          status: "PASS",
+          detail: "Mock 模式下不实际调用 Python bridge，但前端交互契约已保持一致。",
+          hint: "切到 Tauri Desktop 运行时，会自动走真实 bridge 与 SQLite。",
+        },
+        {
+          key: "core-tables",
+          label: "核心数据表",
+          status: "PASS",
+          detail: "Mock 模式下课程、成绩、规划和导入契约均已对齐。",
+          hint: "真实桌面端会额外检查 SQLite 核心表是否完整存在。",
+        },
+      ],
     };
   },
   getSnapshot(): AppSnapshot {
     return buildSnapshot();
   },
+  getRecentOperationLogs(limit = 12): OperationLogRecord[] {
+    return mockOperationLogs.slice(0, limit);
+  },
   createDatabaseBackup(label?: string): DataBackupResult {
     const createdAt = new Date().toISOString();
     const suffix = label?.trim() ? `-${label.trim().replace(/\s+/g, "-")}` : "";
     const fileName = `gpa-manager-backup-${createdAt.slice(0, 19).replace(/[:T]/g, "-")}${suffix}.sqlite3`;
-    return {
+    const backup = {
       path: `${MOCK_DATA_DIRECTORY}/backups/${fileName}`,
       fileName,
       createdAt,
       sizeBytes: 32_768,
+    };
+    mockBackups.unshift(backup);
+    mockBackupSnapshots.set(backup.path, clone(mockState));
+    pushMockLog("data.backup", "backup", "数据库完整备份", "SUCCESS", "Mock 数据库备份已创建。");
+    return backup;
+  },
+  listDatabaseBackups(limit = 12): DataBackupResult[] {
+    return mockBackups.slice(0, limit);
+  },
+  restoreDatabaseBackup(backupPath: string): DataRestoreResult {
+    const snapshot = mockBackupSnapshots.get(backupPath);
+    if (!snapshot) {
+      throw new Error("指定的 Mock 备份不存在，无法恢复。");
+    }
+    const safeguard = this.createDatabaseBackup("pre-restore");
+    const restored = clone(snapshot);
+    mockState.courses = restored.courses;
+    mockState.latestPlanning = restored.latestPlanning;
+    mockState.nextCourseId = restored.nextCourseId;
+    mockState.nextTargetId = restored.nextTargetId;
+    pushMockLog("data.restore_backup", "backup", backupPath.split("/").pop() ?? backupPath, "SUCCESS", "Mock 数据库已从备份恢复。");
+    return {
+      restoredFrom: backupPath,
+      restoredAt: new Date().toISOString(),
+      safeguardBackupPath: safeguard.path,
+      schemaVersion: 2,
     };
   },
   exportSnapshot(label?: string): DataExportResult {
     const createdAt = new Date().toISOString();
     const suffix = label?.trim() ? `-${label.trim().replace(/\s+/g, "-")}` : "";
     const fileName = `gpa-manager-export-${createdAt.slice(0, 19).replace(/[:T]/g, "-")}${suffix}.json`;
-    return {
+    const exportResult = {
       path: `${MOCK_DATA_DIRECTORY}/exports/${fileName}`,
       fileName,
       createdAt,
       recordCount: mockState.courses.length,
       sizeBytes: 18_432,
     };
+    pushMockLog("data.export", "export", "JSON 快照导出", "SUCCESS", "Mock 数据快照已导出。");
+    return exportResult;
   },
   createCourse(payload: CourseUpsertPayload) {
     return createCourse(payload);

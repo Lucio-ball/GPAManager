@@ -1,11 +1,13 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   LoaderCircle,
   PencilLine,
   Plus,
   RefreshCw,
   Search,
+  Sparkles,
   Trash2,
+  WandSparkles,
   X,
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
@@ -24,12 +26,15 @@ import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { useLocalStorageState } from "@/hooks/use-local-storage-state";
 import {
+  useBatchUpdateCoursesMutation,
   useCreateCourseMutation,
   useDeleteCourseMutation,
   useSnapshotQuery,
   useUpdateCourseMutation,
 } from "@/hooks/use-snapshot-query";
+import { useUnsavedChangesProtection } from "@/hooks/use-unsaved-changes-protection";
 import { formatCredit, formatDecimal } from "@/lib/format";
 import type { CourseRecord, CourseStatus, CourseUpsertPayload, ScoreType } from "@/types/domain";
 
@@ -44,6 +49,27 @@ type CourseSortKey =
   | "rawScore"
   | "gradePoint";
 type CourseField = "name" | "semester" | "credit";
+type CourseScoreTypeFilter = "all" | "PERCENTAGE" | "GRADE" | "unset";
+type CourseScoreStateFilter = "all" | "withScore" | "withoutScore";
+type CourseBatchField = "status" | "semester" | "scoreType";
+
+type CourseViewState = {
+  activeTab: CourseTab;
+  searchText: string;
+  sortKey: CourseSortKey;
+  sortDirection: SortDirection;
+  scoreTypeFilter: CourseScoreTypeFilter;
+  scoreStateFilter: CourseScoreStateFilter;
+};
+
+type CourseDraftState = {
+  editorMode: EditorMode;
+  selectedCourseId: string | null;
+  form: CourseUpsertPayload;
+};
+
+const COURSE_VIEW_STORAGE_KEY = "gpa-manager.desktop.course-view.v2";
+const COURSE_DRAFT_STORAGE_KEY = "gpa-manager.desktop.course-draft.v1";
 
 const emptyTouchedState: Record<CourseField, boolean> = {
   name: false,
@@ -51,8 +77,41 @@ const emptyTouchedState: Record<CourseField, boolean> = {
   credit: false,
 };
 
-function normalizeCourseTab(value: string | null): CourseTab {
+function normalizeCourseTab(value: string | null | undefined): CourseTab {
   if (value === "completed" || value === "planned") {
+    return value;
+  }
+  return "all";
+}
+
+function normalizeCourseSortKey(value: string | null | undefined): CourseSortKey {
+  if (
+    value === "name" ||
+    value === "semester" ||
+    value === "credit" ||
+    value === "status" ||
+    value === "scoreType" ||
+    value === "rawScore" ||
+    value === "gradePoint"
+  ) {
+    return value;
+  }
+  return "semester";
+}
+
+function normalizeSortDirection(value: string | null | undefined): SortDirection {
+  return value === "asc" ? "asc" : "desc";
+}
+
+function normalizeScoreTypeFilter(value: string | null | undefined): CourseScoreTypeFilter {
+  if (value === "PERCENTAGE" || value === "GRADE" || value === "unset") {
+    return value;
+  }
+  return "all";
+}
+
+function normalizeScoreStateFilter(value: string | null | undefined): CourseScoreStateFilter {
+  if (value === "withScore" || value === "withoutScore") {
     return value;
   }
   return "all";
@@ -128,6 +187,21 @@ function getCourseFormError(form: CourseUpsertPayload) {
   return null;
 }
 
+function normalizeNote(value: string | null | undefined) {
+  return value?.trim() ? value.trim() : "";
+}
+
+function courseFormsEqual(left: CourseUpsertPayload, right: CourseUpsertPayload) {
+  return (
+    left.name.trim() === right.name.trim() &&
+    left.semester.trim() === right.semester.trim() &&
+    left.credit.trim() === right.credit.trim() &&
+    left.status === right.status &&
+    left.scoreType === right.scoreType &&
+    normalizeNote(left.note) === normalizeNote(right.note)
+  );
+}
+
 function matchesCourseTab(course: CourseRecord, tab: CourseTab) {
   if (tab === "completed") {
     return course.status === "COMPLETED";
@@ -149,6 +223,26 @@ function matchesCourseSearch(course: CourseRecord, search: string) {
   );
 }
 
+function matchesCourseScoreType(course: CourseRecord, filter: CourseScoreTypeFilter) {
+  if (filter === "all") {
+    return true;
+  }
+  if (filter === "unset") {
+    return course.scoreType === null;
+  }
+  return course.scoreType === filter;
+}
+
+function matchesCourseScoreState(course: CourseRecord, filter: CourseScoreStateFilter) {
+  if (filter === "all") {
+    return true;
+  }
+  if (filter === "withScore") {
+    return course.hasScore;
+  }
+  return !course.hasScore;
+}
+
 function compareNullableText(left: string | null | undefined, right: string | null | undefined) {
   return (left ?? "").localeCompare(right ?? "", "zh-Hans-CN");
 }
@@ -160,11 +254,7 @@ function compareNullableNumber(left: string | null | undefined, right: string | 
   return leftValue - rightValue;
 }
 
-function sortCourses(
-  courses: CourseRecord[],
-  key: CourseSortKey,
-  direction: SortDirection,
-) {
+function sortCourses(courses: CourseRecord[], key: CourseSortKey, direction: SortDirection) {
   const statusRank: Record<CourseStatus, number> = {
     PLANNED: 0,
     COMPLETED: 1,
@@ -199,23 +289,40 @@ function sortCourses(
   return ordered;
 }
 
+function getInitialViewState(searchParams: URLSearchParams, stored?: Partial<CourseViewState>): CourseViewState {
+  return {
+    activeTab: normalizeCourseTab(searchParams.get("tab") ?? stored?.activeTab),
+    searchText: searchParams.get("q") ?? stored?.searchText ?? "",
+    sortKey: normalizeCourseSortKey(searchParams.get("sort") ?? stored?.sortKey),
+    sortDirection: normalizeSortDirection(searchParams.get("dir") ?? stored?.sortDirection),
+    scoreTypeFilter: normalizeScoreTypeFilter(searchParams.get("scoreType") ?? stored?.scoreTypeFilter),
+    scoreStateFilter: normalizeScoreStateFilter(searchParams.get("scoreState") ?? stored?.scoreStateFilter),
+  };
+}
+
 export function CourseManagementPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { preferences } = useAppPreferences();
   const snapshotQuery = useSnapshotQuery();
   const createCourseMutation = useCreateCourseMutation();
   const updateCourseMutation = useUpdateCourseMutation();
   const deleteCourseMutation = useDeleteCourseMutation();
+  const batchUpdateCoursesMutation = useBatchUpdateCoursesMutation();
+  const [storedViewState, setStoredViewState] = useLocalStorageState<Partial<CourseViewState>>(
+    COURSE_VIEW_STORAGE_KEY,
+    {},
+  );
+  const [storedDraftState, setStoredDraftState, clearStoredDraftState] = useLocalStorageState<CourseDraftState | null>(
+    COURSE_DRAFT_STORAGE_KEY,
+    null,
+  );
 
   const courses = snapshotQuery.data?.courses ?? [];
-  const [activeTab, setActiveTab] = useState<CourseTab>(() =>
-    normalizeCourseTab(searchParams.get("tab")),
+  const [viewState, setViewState] = useState<CourseViewState>(() =>
+    getInitialViewState(searchParams, storedViewState),
   );
-  const [searchText, setSearchText] = useState("");
   const [editorMode, setEditorMode] = useState<EditorMode>("create");
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<CourseSortKey>("semester");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [form, setForm] = useState<CourseUpsertPayload>(() =>
     createDefaultCourseForm(
       preferences.defaultSemester,
@@ -226,29 +333,80 @@ export function CourseManagementPage() {
   const [touchedFields, setTouchedFields] = useState<Record<CourseField, boolean>>(emptyTouchedState);
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [selectedCourseIds, setSelectedCourseIds] = useState<string[]>([]);
+  const [batchField, setBatchField] = useState<CourseBatchField>("status");
+  const [batchStatus, setBatchStatus] = useState<CourseStatus>("PLANNED");
+  const [batchSemester, setBatchSemester] = useState(preferences.defaultSemester);
+  const [batchScoreType, setBatchScoreType] = useState<CourseScoreTypeFilter>("PERCENTAGE");
+  const [batchError, setBatchError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const draftHydratedRef = useRef(false);
 
-  const deferredSearch = useDeferredValue(searchText.trim());
+  const deferredSearch = useDeferredValue(viewState.searchText.trim());
+  const defaultCreateForm = useMemo(
+    () =>
+      createDefaultCourseForm(
+        preferences.defaultSemester,
+        preferences.defaultCourseStatus,
+        preferences.defaultScoreType,
+      ),
+    [preferences.defaultCourseStatus, preferences.defaultScoreType, preferences.defaultSemester],
+  );
   const fieldErrors = useMemo(() => getCourseFieldErrors(form), [form]);
   const filteredCourses = useMemo(
     () =>
       sortCourses(
         courses.filter(
-          (course) => matchesCourseTab(course, activeTab) && matchesCourseSearch(course, deferredSearch),
+          (course) =>
+            matchesCourseTab(course, viewState.activeTab) &&
+            matchesCourseSearch(course, deferredSearch) &&
+            matchesCourseScoreType(course, viewState.scoreTypeFilter) &&
+            matchesCourseScoreState(course, viewState.scoreStateFilter),
         ),
-        sortKey,
-        sortDirection,
+        viewState.sortKey,
+        viewState.sortDirection,
       ),
-    [activeTab, courses, deferredSearch, sortDirection, sortKey],
+    [courses, deferredSearch, viewState],
   );
   const selectedCourse = courses.find((course) => course.id === selectedCourseId) ?? null;
+  const baselineForm = selectedCourse && editorMode === "edit" ? toCourseForm(selectedCourse) : defaultCreateForm;
+  const hasUnsavedChanges = !courseFormsEqual(form, baselineForm);
+  const { confirmDiscardChanges } = useUnsavedChangesProtection(
+    hasUnsavedChanges,
+    "当前课程表单还有未保存修改，离开后会丢失。确定继续吗？",
+  );
   const isSaving = createCourseMutation.isPending || updateCourseMutation.isPending;
+  const selectedBatchCourses = courses.filter((course) => selectedCourseIds.includes(course.id));
+  const filteredCourseIds = filteredCourses.map((course) => course.id);
+  const allFilteredSelected =
+    filteredCourseIds.length > 0 && filteredCourseIds.every((courseId) => selectedCourseIds.includes(courseId));
 
   useEffect(() => {
-    if (selectedCourseId && !courses.some((course) => course.id === selectedCourseId)) {
-      handleCreateNew();
+    setStoredViewState(viewState);
+  }, [setStoredViewState, viewState]);
+
+  useEffect(() => {
+    const nextParams = new URLSearchParams();
+    if (viewState.activeTab !== "all") {
+      nextParams.set("tab", viewState.activeTab);
     }
-  }, [courses, selectedCourseId]);
+    if (viewState.searchText.trim()) {
+      nextParams.set("q", viewState.searchText.trim());
+    }
+    if (viewState.sortKey !== "semester") {
+      nextParams.set("sort", viewState.sortKey);
+    }
+    if (viewState.sortDirection !== "desc") {
+      nextParams.set("dir", viewState.sortDirection);
+    }
+    if (viewState.scoreTypeFilter !== "all") {
+      nextParams.set("scoreType", viewState.scoreTypeFilter);
+    }
+    if (viewState.scoreStateFilter !== "all") {
+      nextParams.set("scoreState", viewState.scoreStateFilter);
+    }
+    setSearchParams(nextParams, { replace: true });
+  }, [setSearchParams, viewState]);
 
   useEffect(() => {
     if (editorMode === "create") {
@@ -256,37 +414,135 @@ export function CourseManagementPage() {
     }
   }, [editorMode]);
 
-  function handleCreateNew(nextForm?: CourseUpsertPayload) {
-    setEditorMode("create");
-    setSelectedCourseId(null);
-    setForm(
-      nextForm ??
-        createDefaultCourseForm(
-          preferences.defaultSemester,
-          preferences.defaultCourseStatus,
-          preferences.defaultScoreType,
-        ),
-    );
-    setTouchedFields(emptyTouchedState);
-    setFormError(null);
-  }
-
-  function handleSelectCourse(course: CourseRecord) {
-    setEditorMode("edit");
-    setSelectedCourseId(course.id);
-    setForm(toCourseForm(course));
-    setTouchedFields(emptyTouchedState);
-    setFormError(null);
-  }
-
-  function handleToggleSort(key: CourseSortKey) {
-    if (sortKey === key) {
-      setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+  useEffect(() => {
+    if (!selectedCourseId) {
       return;
     }
 
-    setSortKey(key);
-    setSortDirection(key === "name" ? "asc" : "desc");
+    window.requestAnimationFrame(() => {
+      document.getElementById(`course-row-${selectedCourseId}`)?.scrollIntoView({
+        block: "nearest",
+        behavior: "smooth",
+      });
+    });
+  }, [filteredCourses, selectedCourseId]);
+
+  useEffect(() => {
+    if (selectedCourseId && !courses.some((course) => course.id === selectedCourseId)) {
+      applyCreateState(defaultCreateForm);
+    }
+  }, [courses, defaultCreateForm, selectedCourseId]);
+
+  useEffect(() => {
+    setSelectedCourseIds((current) => current.filter((courseId) => courses.some((course) => course.id === courseId)));
+  }, [courses]);
+
+  useEffect(() => {
+    if (hasUnsavedChanges) {
+      setStoredDraftState({
+        editorMode,
+        selectedCourseId,
+        form,
+      });
+      return;
+    }
+
+    clearStoredDraftState();
+  }, [
+    clearStoredDraftState,
+    editorMode,
+    form,
+    hasUnsavedChanges,
+    selectedCourseId,
+    setStoredDraftState,
+  ]);
+
+  useEffect(() => {
+    if (draftHydratedRef.current || snapshotQuery.isLoading) {
+      return;
+    }
+
+    if (storedDraftState?.editorMode === "edit" && storedDraftState.selectedCourseId) {
+      const draftCourse = courses.find((course) => course.id === storedDraftState.selectedCourseId);
+      if (draftCourse) {
+        setEditorMode("edit");
+        setSelectedCourseId(draftCourse.id);
+        setForm(storedDraftState.form);
+        setTouchedFields(emptyTouchedState);
+        setFormError("已恢复上次未保存的课程草稿。");
+        draftHydratedRef.current = true;
+        return;
+      }
+    }
+
+    if (storedDraftState?.form) {
+      applyCreateState(storedDraftState.form);
+      setFormError("已恢复上次未保存的课程草稿。");
+    }
+    draftHydratedRef.current = true;
+  }, [courses, snapshotQuery.isLoading, storedDraftState]);
+
+  function updateViewState(patch: Partial<CourseViewState>) {
+    setViewState((current) => ({ ...current, ...patch }));
+  }
+
+  function applyCreateState(nextForm = defaultCreateForm) {
+    setEditorMode("create");
+    setSelectedCourseId(null);
+    setForm(nextForm);
+    setTouchedFields(emptyTouchedState);
+    setFormError(null);
+  }
+
+  function applyEditState(course: CourseRecord, nextForm = toCourseForm(course)) {
+    setEditorMode("edit");
+    setSelectedCourseId(course.id);
+    setForm(nextForm);
+    setTouchedFields(emptyTouchedState);
+    setFormError(null);
+  }
+
+  function handleCreateNew(nextForm?: CourseUpsertPayload) {
+    if (!confirmDiscardChanges()) {
+      return;
+    }
+
+    applyCreateState(nextForm ?? defaultCreateForm);
+  }
+
+  function handleSelectCourse(course: CourseRecord) {
+    if (selectedCourseId === course.id) {
+      return;
+    }
+    if (!confirmDiscardChanges()) {
+      return;
+    }
+
+    applyEditState(course);
+  }
+
+  function handleToggleSort(key: CourseSortKey) {
+    updateViewState(
+      viewState.sortKey === key
+        ? { sortDirection: viewState.sortDirection === "asc" ? "desc" : "asc" }
+        : {
+            sortKey: key,
+            sortDirection: key === "name" ? "asc" : "desc",
+          },
+    );
+  }
+
+  function handleResetCurrentForm(force = false) {
+    if (!force && hasUnsavedChanges && !confirmDiscardChanges()) {
+      return;
+    }
+
+    if (selectedCourse && editorMode === "edit") {
+      applyEditState(selectedCourse);
+      return;
+    }
+
+    applyCreateState(defaultCreateForm);
   }
 
   function handleSubmit(mode: "default" | "continue") {
@@ -313,10 +569,7 @@ export function CourseManagementPage() {
         { courseId: selectedCourseId, payload },
         {
           onSuccess: (course) => {
-            setSelectedCourseId(course.id);
-            setEditorMode("edit");
-            setForm(toCourseForm(course));
-            setTouchedFields(emptyTouchedState);
+            applyEditState(course);
           },
           onError: (error) => {
             setFormError(error instanceof Error ? error.message : "编辑课程失败。");
@@ -329,7 +582,7 @@ export function CourseManagementPage() {
     createCourseMutation.mutate(payload, {
       onSuccess: (course) => {
         if (mode === "continue") {
-          handleCreateNew(
+          applyCreateState(
             buildContinuousCreateForm(
               payload,
               preferences.defaultSemester,
@@ -340,10 +593,7 @@ export function CourseManagementPage() {
           return;
         }
 
-        setSelectedCourseId(course.id);
-        setEditorMode("edit");
-        setForm(toCourseForm(course));
-        setTouchedFields(emptyTouchedState);
+        applyEditState(course);
       },
       onError: (error) => {
         setFormError(error instanceof Error ? error.message : "新建课程失败。");
@@ -360,12 +610,124 @@ export function CourseManagementPage() {
     deleteCourseMutation.mutate(selectedCourseId, {
       onSuccess: () => {
         setDeleteDialogOpen(false);
-        handleCreateNew();
+        applyCreateState(defaultCreateForm);
       },
       onError: (error) => {
         setFormError(error instanceof Error ? error.message : "删除课程失败。");
       },
     });
+  }
+
+  function handleToggleCourseSelection(courseId: string) {
+    setSelectedCourseIds((current) =>
+      current.includes(courseId)
+        ? current.filter((id) => id !== courseId)
+        : [...current, courseId],
+    );
+  }
+
+  function handleToggleSelectAllFiltered(checked: boolean) {
+    if (checked) {
+      setSelectedCourseIds((current) => Array.from(new Set([...current, ...filteredCourseIds])));
+      return;
+    }
+
+    setSelectedCourseIds((current) => current.filter((courseId) => !filteredCourseIds.includes(courseId)));
+  }
+
+  function handleApplyBatchUpdate() {
+    setBatchError(null);
+
+    if (!selectedBatchCourses.length) {
+      setBatchError("请先从列表中勾选要批量修改的课程。");
+      return;
+    }
+
+    if (batchField === "semester" && !/^\d{4}[春夏秋冬]$/u.test(batchSemester.trim())) {
+      setBatchError("批量学期格式需为 YYYY+春/夏/秋/冬，例如 2026春。");
+      return;
+    }
+
+    if (batchField === "status" && batchStatus === "PLANNED") {
+      const blockedCourses = selectedBatchCourses.filter((course) => course.hasScore);
+      if (blockedCourses.length) {
+        setBatchError(
+          `以下课程已有成绩，不能直接批量改回未修：${blockedCourses.map((course) => course.name).join("、")}。`,
+        );
+        return;
+      }
+    }
+
+    if (batchField === "scoreType" && batchScoreType === "unset") {
+      const blockedCourses = selectedBatchCourses.filter((course) => course.hasScore);
+      if (blockedCourses.length) {
+        setBatchError(
+          `以下课程已有成绩，不能批量清空成绩类型：${blockedCourses.map((course) => course.name).join("、")}。`,
+        );
+        return;
+      }
+    }
+
+    const updates = selectedBatchCourses.flatMap((course) => {
+      const payload = toCourseForm(course);
+
+      if (batchField === "status") {
+        payload.status = batchStatus;
+      } else if (batchField === "semester") {
+        payload.semester = batchSemester.trim();
+      } else {
+        payload.scoreType =
+          batchScoreType === "unset" ? null : (batchScoreType as ScoreType);
+      }
+
+      return courseFormsEqual(payload, toCourseForm(course))
+        ? []
+        : [
+            {
+              courseId: course.id,
+              payload,
+              label: `${course.name} (${course.semester})`,
+            },
+          ];
+    });
+
+    if (!updates.length) {
+      setBatchError("选中的课程当前已经是目标值，不需要重复更新。");
+      return;
+    }
+
+    batchUpdateCoursesMutation.mutate(
+      { updates },
+      {
+        onSuccess: (result) => {
+          if (!result.failureCount) {
+            setSelectedCourseIds([]);
+          }
+        },
+      },
+    );
+  }
+
+  function handleEditorKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    const tagName = target.tagName;
+
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      handleSubmit(editorMode === "create" ? "continue" : "default");
+      return;
+    }
+
+    if (event.key === "Enter" && tagName === "INPUT") {
+      event.preventDefault();
+      handleSubmit("default");
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      handleResetCurrentForm();
+    }
   }
 
   const plannedCount = courses.filter((course) => course.status === "PLANNED").length;
@@ -375,11 +737,11 @@ export function CourseManagementPage() {
     <div className="flex flex-col gap-6">
       <PageHero
         eyebrow="Course Workspace"
-        title="课程主数据现在更像日常工作台：支持排序、默认值、连续录入和更稳的删除保护。"
-        description="列表区域优先解决“找得快”，编辑区域优先解决“录得顺”。课程一旦变更，成绩页、规划页和首页 summary 都会联动刷新。"
+        title="课程页现在更像高频工作台：连续新增、批量修改、组合筛选和未保存保护都在同一条操作链里。"
+        description="列表区域优先解决找得快，编辑区域优先解决录得顺。课程一旦变更，成绩页、规划页和首页 summary 都会联动刷新。"
         actions={
           <>
-            <Badge variant="outline">排序 + 搜索 + 状态筛选</Badge>
+            <Badge variant="outline">搜索 + 筛选 + 排序联动</Badge>
             <Badge variant="secondary">默认学期 {preferences.defaultSemester}</Badge>
             <Button
               variant="secondary"
@@ -397,22 +759,28 @@ export function CourseManagementPage() {
         }
       />
 
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as CourseTab)}>
+      {hasUnsavedChanges ? (
+        <InlineMessage tone="warning">
+          当前课程表单还有未保存内容。切换记录、切页或关闭窗口前都会再次确认，并且草稿会在下次打开时自动恢复。
+        </InlineMessage>
+      ) : null}
+
+      <Tabs value={viewState.activeTab} onValueChange={(value) => updateViewState({ activeTab: value as CourseTab })}>
         <TabsList>
           <TabsTrigger value="all">全部课程 {courses.length}</TabsTrigger>
           <TabsTrigger value="completed">已修 {completedCount}</TabsTrigger>
           <TabsTrigger value="planned">未修 {plannedCount}</TabsTrigger>
         </TabsList>
 
-        <TabsContent value={activeTab}>
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_420px]">
+        <TabsContent value={viewState.activeTab}>
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_420px]">
             <Card>
               <CardHeader className="gap-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <div>
                     <CardTitle>课程列表</CardTitle>
                     <CardDescription>
-                      支持按名称、学期和备注搜索，也支持按学期、学分、状态等常用字段排序。
+                      搜索、状态筛选、成绩类型筛选、是否已录入成绩筛选和排序可以叠加使用，适合高频回查与修正。
                     </CardDescription>
                   </div>
                   <div className="rounded-full border border-white/8 bg-white/[0.04] px-3 py-1 text-xs text-muted-foreground">
@@ -420,23 +788,159 @@ export function CourseManagementPage() {
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-3 sm:flex-row">
-                  <div className="relative flex-1">
-                    <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      value={searchText}
-                      onChange={(event) => setSearchText(event.target.value)}
-                      placeholder="搜索课程名称、学期或备注"
-                      className="pl-11"
-                    />
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-3 sm:flex-row">
+                    <div className="relative flex-1">
+                      <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        value={viewState.searchText}
+                        onChange={(event) => updateViewState({ searchText: event.target.value })}
+                        placeholder="搜索课程名称、学期或备注"
+                        className="pl-11"
+                      />
+                    </div>
+                    <Button
+                      variant="outline"
+                      onClick={() =>
+                        updateViewState({
+                          searchText: "",
+                          scoreTypeFilter: "all",
+                          scoreStateFilter: "all",
+                          activeTab: "all",
+                        })
+                      }
+                      disabled={
+                        !viewState.searchText &&
+                        viewState.scoreTypeFilter === "all" &&
+                        viewState.scoreStateFilter === "all" &&
+                        viewState.activeTab === "all"
+                      }
+                    >
+                      <X data-icon="inline-start" />
+                      清空筛选
+                    </Button>
                   </div>
-                  <Button variant="outline" onClick={() => setSearchText("")} disabled={!searchText}>
-                    <X data-icon="inline-start" />
-                    清空搜索
-                  </Button>
+
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    <label className="flex flex-col gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                        成绩类型
+                      </span>
+                      <Select
+                        value={viewState.scoreTypeFilter}
+                        onChange={(event) =>
+                          updateViewState({
+                            scoreTypeFilter: normalizeScoreTypeFilter(event.target.value),
+                          })
+                        }
+                      >
+                        <option value="all">全部类型</option>
+                        <option value="PERCENTAGE">百分制</option>
+                        <option value="GRADE">等级制</option>
+                        <option value="unset">未设置</option>
+                      </Select>
+                    </label>
+
+                    <label className="flex flex-col gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                        成绩录入状态
+                      </span>
+                      <Select
+                        value={viewState.scoreStateFilter}
+                        onChange={(event) =>
+                          updateViewState({
+                            scoreStateFilter: normalizeScoreStateFilter(event.target.value),
+                          })
+                        }
+                      >
+                        <option value="all">全部</option>
+                        <option value="withScore">已录入成绩</option>
+                        <option value="withoutScore">未录入成绩</option>
+                      </Select>
+                    </label>
+
+                    <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-3 text-sm leading-6 text-muted-foreground">
+                      当前视图会自动记忆，下次回到课程页时会恢复最近一次筛选和排序组合。
+                    </div>
+                  </div>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex flex-col gap-4">
+                <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                        <WandSparkles className="size-4 text-accent" />
+                        批量修改
+                      </div>
+                      <div className="mt-1 text-sm leading-6 text-muted-foreground">
+                        适合一次性统一调整学期、课程状态或成绩类型，不引入复杂表格编辑器。
+                      </div>
+                    </div>
+                    <Badge variant="secondary">已选 {selectedBatchCourses.length}</Badge>
+                  </div>
+
+                  {batchError ? <InlineMessage tone="error" className="mt-4">{batchError}</InlineMessage> : null}
+
+                  <div className="mt-4 grid gap-3 lg:grid-cols-[180px_minmax(0,1fr)_auto]">
+                    <Select
+                      value={batchField}
+                      onChange={(event) => setBatchField(event.target.value as CourseBatchField)}
+                    >
+                      <option value="status">批量改状态</option>
+                      <option value="semester">批量改学期</option>
+                      <option value="scoreType">批量改成绩类型</option>
+                    </Select>
+
+                    {batchField === "status" ? (
+                      <Select
+                        value={batchStatus}
+                        onChange={(event) => setBatchStatus(event.target.value as CourseStatus)}
+                      >
+                        <option value="PLANNED">未修</option>
+                        <option value="COMPLETED">已修</option>
+                      </Select>
+                    ) : null}
+
+                    {batchField === "semester" ? (
+                      <Input
+                        value={batchSemester}
+                        onChange={(event) => setBatchSemester(event.target.value)}
+                        placeholder="例如：2026春"
+                      />
+                    ) : null}
+
+                    {batchField === "scoreType" ? (
+                      <Select
+                        value={batchScoreType}
+                        onChange={(event) => setBatchScoreType(event.target.value as CourseScoreTypeFilter)}
+                      >
+                        <option value="PERCENTAGE">百分制</option>
+                        <option value="GRADE">等级制</option>
+                        <option value="unset">清空成绩类型</option>
+                      </Select>
+                    ) : null}
+
+                    <div className="flex gap-3">
+                      <AsyncButton
+                        variant="secondary"
+                        onClick={handleApplyBatchUpdate}
+                        pending={batchUpdateCoursesMutation.isPending}
+                        idleLabel="应用到已选课程"
+                        pendingLabel="批量更新中..."
+                        icon={<Sparkles data-icon="inline-start" />}
+                      />
+                      <Button
+                        variant="outline"
+                        onClick={() => setSelectedCourseIds([])}
+                        disabled={!selectedCourseIds.length || batchUpdateCoursesMutation.isPending}
+                      >
+                        清空勾选
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
                 {snapshotQuery.isLoading ? (
                   <StatePanel tone="neutral">
                     <LoaderCircle className="size-4 animate-spin" />
@@ -473,46 +977,55 @@ export function CourseManagementPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        <TableHead className="w-[52px]">
+                          <input
+                            type="checkbox"
+                            checked={allFilteredSelected}
+                            onChange={(event) => handleToggleSelectAllFiltered(event.target.checked)}
+                            className="size-4 rounded border-white/15 bg-transparent accent-[var(--color-accent)]"
+                            aria-label="Select all filtered courses"
+                          />
+                        </TableHead>
                         <SortHeader
                           label="课程"
-                          active={sortKey === "name"}
-                          direction={sortDirection}
+                          active={viewState.sortKey === "name"}
+                          direction={viewState.sortDirection}
                           onToggle={() => handleToggleSort("name")}
                         />
                         <SortHeader
                           label="学期"
-                          active={sortKey === "semester"}
-                          direction={sortDirection}
+                          active={viewState.sortKey === "semester"}
+                          direction={viewState.sortDirection}
                           onToggle={() => handleToggleSort("semester")}
                         />
                         <SortHeader
                           label="学分"
-                          active={sortKey === "credit"}
-                          direction={sortDirection}
+                          active={viewState.sortKey === "credit"}
+                          direction={viewState.sortDirection}
                           onToggle={() => handleToggleSort("credit")}
                         />
                         <SortHeader
                           label="状态"
-                          active={sortKey === "status"}
-                          direction={sortDirection}
+                          active={viewState.sortKey === "status"}
+                          direction={viewState.sortDirection}
                           onToggle={() => handleToggleSort("status")}
                         />
                         <SortHeader
                           label="成绩类型"
-                          active={sortKey === "scoreType"}
-                          direction={sortDirection}
+                          active={viewState.sortKey === "scoreType"}
+                          direction={viewState.sortDirection}
                           onToggle={() => handleToggleSort("scoreType")}
                         />
                         <SortHeader
                           label="原始成绩"
-                          active={sortKey === "rawScore"}
-                          direction={sortDirection}
+                          active={viewState.sortKey === "rawScore"}
+                          direction={viewState.sortDirection}
                           onToggle={() => handleToggleSort("rawScore")}
                         />
                         <SortHeader
                           label="绩点"
-                          active={sortKey === "gradePoint"}
-                          direction={sortDirection}
+                          active={viewState.sortKey === "gradePoint"}
+                          direction={viewState.sortDirection}
                           onToggle={() => handleToggleSort("gradePoint")}
                         />
                         <TableHead className="w-[120px]">操作</TableHead>
@@ -523,7 +1036,20 @@ export function CourseManagementPage() {
                         const isActive = selectedCourseId === course.id;
 
                         return (
-                          <TableRow key={course.id} className={isActive ? "bg-white/[0.05]" : ""}>
+                          <TableRow
+                            key={course.id}
+                            id={`course-row-${course.id}`}
+                            className={isActive ? "bg-white/[0.05]" : ""}
+                          >
+                            <TableCell>
+                              <input
+                                type="checkbox"
+                                checked={selectedCourseIds.includes(course.id)}
+                                onChange={() => handleToggleCourseSelection(course.id)}
+                                className="size-4 rounded border-white/15 bg-transparent accent-[var(--color-accent)]"
+                                aria-label={`Select ${course.name}`}
+                              />
+                            </TableCell>
                             <TableCell>
                               <div className="font-medium text-foreground">{course.name}</div>
                               <div className="mt-1 text-xs text-muted-foreground">
@@ -559,15 +1085,19 @@ export function CourseManagementPage() {
                     <div>
                       <div className="font-medium text-foreground">当前筛选下没有课程</div>
                       <div className="mt-1 text-sm leading-6 text-muted-foreground">
-                        可以清空搜索词，或者切换到其他状态筛选。
+                        可以清空搜索词，或者切换到其他筛选组合。
                       </div>
                     </div>
                     <Button
                       variant="secondary"
-                      onClick={() => {
-                        setSearchText("");
-                        setActiveTab("all");
-                      }}
+                      onClick={() =>
+                        updateViewState({
+                          activeTab: "all",
+                          searchText: "",
+                          scoreTypeFilter: "all",
+                          scoreStateFilter: "all",
+                        })
+                      }
                     >
                       清空筛选
                     </Button>
@@ -584,14 +1114,14 @@ export function CourseManagementPage() {
                     <CardTitle>{editorMode === "create" ? "新增课程" : "编辑课程"}</CardTitle>
                     <CardDescription>
                       {editorMode === "create"
-                        ? "默认值来自设置，可连续创建多门课程，减少重复输入。"
-                        : "保存后会立即影响成绩录入、规划计算和首页快照。"}
+                        ? "默认值来自设置，可连续创建多门课程。Enter 保存，Ctrl+Enter 创建并继续，Esc 重置当前草稿。"
+                        : "保存后会立即影响成绩录入、规划计算和首页快照。Esc 可恢复到已保存状态。"}
                     </CardDescription>
                   </div>
                   <Badge variant="secondary">{editorMode === "create" ? "CREATE" : "EDIT"}</Badge>
                 </div>
               </CardHeader>
-              <CardContent className="flex flex-col gap-4">
+              <CardContent className="flex flex-col gap-4" onKeyDown={handleEditorKeyDown}>
                 {formError ? <InlineMessage tone="error">{formError}</InlineMessage> : null}
 
                 {selectedCourse ? (
@@ -605,7 +1135,7 @@ export function CourseManagementPage() {
                   </div>
                 ) : (
                   <InlineMessage tone="neutral">
-                    当前是新建模式，默认学期为 {preferences.defaultSemester}，保存后可直接继续录入下一门课程。
+                    当前是新建模式，默认学期为 {preferences.defaultSemester}。保存后可以直接继续录入下一门课程。
                   </InlineMessage>
                 )}
 
@@ -740,7 +1270,7 @@ export function CourseManagementPage() {
                       </Button>
                     )}
 
-                    <Button variant="secondary" onClick={() => handleCreateNew()} disabled={isSaving}>
+                    <Button variant="secondary" onClick={() => handleResetCurrentForm()} disabled={isSaving}>
                       <PencilLine data-icon="inline-start" />
                       重置当前表单
                     </Button>
@@ -802,4 +1332,3 @@ function Field({
     </label>
   );
 }
-

@@ -8,6 +8,7 @@ import type {
   DataExportResult,
   GpaSummary,
   ImportKind,
+  ImportTemplateDefinition,
   ImportWorkbenchResult,
   PlanningExpectationSavePayload,
   PlanningScenarioExpectation,
@@ -341,6 +342,7 @@ function createEmptyPlanningTarget(targetGpa: string): PlanningTargetResult {
   return {
     targetId,
     targetGpa: formatFixed(normalizedTarget, 3),
+    lastUpdatedAt: new Date().toISOString(),
     basedOnCurrentGpa: baseline.summary.currentGpa ?? "0.000",
     basedOnCompletedCreditSum: baseline.summary.countedCreditSum,
     plannedCreditSum: formatFixed(baseline.plannedCreditSum, 1),
@@ -370,19 +372,94 @@ function refreshPlanningIfNeeded() {
 }
 
 function buildSnapshot(): AppSnapshot {
+  const courseTextExample = [
+    "course_name=Operating Systems;semester=2025\\u79cb;credit=4.0;status=PLANNED;score_type=PERCENTAGE;note=\\u6838\\u5fc3\\u8bfe",
+    "course_name=Computer Networks;semester=2025\\u79cb;credit=3.0;status=PLANNED;score_type=PERCENTAGE",
+  ].join("\n");
+  const scoreTextExample = [
+    "course_name=Advanced Mathematics;semester=2024\\u79cb;raw_score=92",
+    "course_name=College English;semester=2024\\u79cb;raw_score=88",
+  ].join("\n");
+  const courseTemplate: ImportTemplateDefinition = {
+    title: "\u8bfe\u7a0b\u5bfc\u5165\u6a21\u677f",
+    textExample: courseTextExample,
+    fieldGuides: [
+      {
+        name: "course_name",
+        required: true,
+        description: "\u8bfe\u7a0b\u540d\u79f0\uff1b\u540e\u7eed\u6210\u7ee9\u5bfc\u5165\u4e5f\u4f1a\u7528\u8fd9\u4e2a\u540d\u79f0\u914d\u5bf9\u3002",
+      },
+      {
+        name: "semester",
+        required: true,
+        description: "\u5b66\u671f\u6587\u672c\uff1b\u5efa\u8bae\u7edf\u4e00\u4f7f\u7528 2025\u79cb / 2026\u6625 \u8fd9\u7c7b\u5199\u6cd5\u3002",
+      },
+      {
+        name: "credit",
+        required: true,
+        description: "\u6b63\u6570\u5b66\u5206\uff1b\u652f\u6301 3\u30013.0\u30013.5 \u8fd9\u6837\u7684\u5c0f\u6570\u5199\u6cd5\u3002",
+      },
+      {
+        name: "status",
+        required: true,
+        description: "\u53ea\u80fd\u662f COMPLETED \u6216 PLANNED\u3002",
+      },
+      {
+        name: "score_type",
+        required: false,
+        description: "\u53ef\u9009\uff1b\u5982\u679c\u586b\u5199\uff0c\u53ea\u80fd\u662f PERCENTAGE \u6216 GRADE\u3002",
+      },
+      {
+        name: "note",
+        required: false,
+        description: "\u53ef\u9009\u5907\u6ce8\uff0c\u4e0d\u53c2\u4e0e GPA \u8ba1\u7b97\u3002",
+      },
+    ],
+    commonMistakes: [
+      "\u6bcf\u884c\u4e00\u6761\u8bb0\u5f55\uff0c\u5b57\u6bb5\u5fc5\u987b\u5199\u6210 key=value\uff0c\u5e76\u7528\u82f1\u6587\u5206\u53f7 ; \u5206\u9694\u3002",
+      "status \u53ea\u80fd\u662f COMPLETED / PLANNED\uff1bscore_type \u5982\u679c\u586b\u5199\uff0c\u53ea\u80fd\u662f PERCENTAGE / GRADE\u3002",
+    ],
+  };
+  const scoreTemplate: ImportTemplateDefinition = {
+    title: "\u6210\u7ee9\u5bfc\u5165\u6a21\u677f",
+    textExample: scoreTextExample,
+    fieldGuides: [
+      {
+        name: "course_name",
+        required: true,
+        description: "\u8bfe\u7a0b\u540d\u79f0\uff1b\u5fc5\u987b\u80fd\u5728\u5df2\u6709\u8bfe\u7a0b\u5217\u8868\u91cc\u627e\u5230\u3002",
+      },
+      {
+        name: "semester",
+        required: true,
+        description: "\u5b66\u671f\u6587\u672c\uff1b\u9700\u8981\u4e0e\u73b0\u5b58\u8bfe\u7a0b\u8bb0\u5f55\u5b8c\u5168\u4e00\u81f4\u3002",
+      },
+      {
+        name: "raw_score",
+        required: true,
+        description: "\u539f\u59cb\u6210\u7ee9\uff1b\u4f1a\u6309\u771f\u5b9e\u89c4\u5219\u8f6c\u6210\u7ee9\u70b9\u5e76\u6821\u9a8c\u3002",
+      },
+      {
+        name: "score_type",
+        required: false,
+        description: "\u8bfe\u7a0b\u4e0a\u6ca1\u6709\u8bbe\u7f6e\u6210\u7ee9\u7c7b\u578b\u65f6\u53ef\u4ee5\u8865\u586b\uff1b\u53ea\u80fd\u662f PERCENTAGE \u6216 GRADE\u3002",
+      },
+    ],
+    commonMistakes: [
+      "\u6210\u7ee9\u5bfc\u5165\u524d\uff0c\u8bfe\u7a0b\u5fc5\u987b\u5df2\u5b58\u5728\uff0c\u4e14\u8bfe\u7a0b\u72b6\u6001\u5fc5\u987b\u662f COMPLETED\u3002",
+      "\u5982\u679c\u8bfe\u7a0b\u548c\u5bfc\u5165\u884c\u90fd\u6ca1\u6709 score_type\uff0c\u6216\u4e24\u8fb9 score_type \u51b2\u7a81\uff0c\u9884\u68c0\u4f1a\u76f4\u63a5\u5931\u8d25\u3002",
+    ],
+  };
+
   return {
     summary: calculateSummary(mockState.courses),
     courses: sortCourses(mockState.courses),
     latestPlanning: mockState.latestPlanning ? clone(mockState.latestPlanning) : null,
     importTemplates: {
-      courseTextExample: [
-        "course_name=Operating Systems;semester=2025\\u79cb;credit=4.0;status=PLANNED;score_type=PERCENTAGE;note=core",
-        "course_name=Computer Networks;semester=2025\\u79cb;credit=3.0;status=PLANNED;score_type=PERCENTAGE",
-      ].join("\n"),
-      scoreTextExample: [
-        "course_name=Advanced Mathematics;semester=2024\\u79cb;raw_score=92",
-        "course_name=College English;semester=2024\\u79cb;raw_score=88",
-      ].join("\n"),
+      courseTextExample,
+      scoreTextExample,
+      course: courseTemplate,
+      score: scoreTemplate,
     },
   };
 }
@@ -566,6 +643,7 @@ function savePlanningExpectations(payload: PlanningExpectationSavePayload) {
     scenario.expectations = [...scenario.expectations, nextExpectation];
   }
 
+  mockState.latestPlanning.lastUpdatedAt = new Date().toISOString();
   mockState.latestPlanning = recalculatePlanning(mockState.latestPlanning, mockState.courses);
   return clone(mockState.latestPlanning);
 }

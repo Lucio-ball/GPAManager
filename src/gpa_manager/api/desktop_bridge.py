@@ -96,22 +96,94 @@ class DesktopBridgeApp:
             if latest_target_row is not None
             else None
         )
+        course_template_text = (
+            "course_name=Operating Systems;semester=2025秋;credit=4.0;status=PLANNED;"
+            "score_type=PERCENTAGE;note=核心课\n"
+            "course_name=Computer Networks;semester=2025秋;credit=3.0;status=PLANNED;"
+            "score_type=PERCENTAGE"
+        )
+        score_template_text = (
+            "course_name=Advanced Mathematics;semester=2024秋;raw_score=92\n"
+            "course_name=College English;semester=2024秋;raw_score=88"
+        )
 
         return {
             "summary": summary,
             "courses": courses,
             "latest_planning": latest_target,
             "import_templates": {
-                "course_text_example": (
-                    "course_name=Operating Systems;semester=2025秋;credit=4.0;status=PLANNED;"
-                    "score_type=PERCENTAGE;note=核心课\n"
-                    "course_name=Computer Networks;semester=2025秋;credit=3.0;status=PLANNED;"
-                    "score_type=PERCENTAGE"
-                ),
-                "score_text_example": (
-                    "course_name=Advanced Mathematics;semester=2024秋;raw_score=92\n"
-                    "course_name=College English;semester=2024秋;raw_score=88"
-                ),
+                "course_text_example": course_template_text,
+                "score_text_example": score_template_text,
+                "course": {
+                    "title": "课程导入模板",
+                    "text_example": course_template_text,
+                    "field_guides": [
+                        {
+                            "name": "course_name",
+                            "required": True,
+                            "description": "课程名称；后续成绩导入时也要使用同名同学期定位课程。",
+                        },
+                        {
+                            "name": "semester",
+                            "required": True,
+                            "description": "学期文本；建议保持如 2025秋、2026春 这样的统一写法。",
+                        },
+                        {
+                            "name": "credit",
+                            "required": True,
+                            "description": "正数学分；支持 3、3.0、3.5 这类十进制写法。",
+                        },
+                        {
+                            "name": "status",
+                            "required": True,
+                            "description": "只能填写 COMPLETED 或 PLANNED。",
+                        },
+                        {
+                            "name": "score_type",
+                            "required": False,
+                            "description": "可选；若填写，只能是 PERCENTAGE 或 GRADE。",
+                        },
+                        {
+                            "name": "note",
+                            "required": False,
+                            "description": "可选备注，不参与 GPA 计算。",
+                        },
+                    ],
+                    "common_mistakes": [
+                        "每行一条记录，字段必须写成 key=value，并用英文分号 ; 分隔。",
+                        "status 只能是 COMPLETED / PLANNED；score_type 如果填写，只能是 PERCENTAGE / GRADE。",
+                    ],
+                },
+                "score": {
+                    "title": "成绩导入模板",
+                    "text_example": score_template_text,
+                    "field_guides": [
+                        {
+                            "name": "course_name",
+                            "required": True,
+                            "description": "课程名称；必须能在现有课程库里找到同名同学期课程。",
+                        },
+                        {
+                            "name": "semester",
+                            "required": True,
+                            "description": "学期文本；需要与已存在课程记录完全匹配。",
+                        },
+                        {
+                            "name": "raw_score",
+                            "required": True,
+                            "description": "原始成绩值；会按课程成绩类型走真实规则校验。",
+                        },
+                        {
+                            "name": "score_type",
+                            "required": False,
+                            "description": "课程上没设成绩类型时可补填；只能是 PERCENTAGE 或 GRADE。",
+                        },
+                    ],
+                    "common_mistakes": [
+                        "成绩导入前，课程必须已经存在，且课程状态必须是 COMPLETED。",
+                        "如果课程和导入行都没有 score_type，或者两边 score_type 冲突，预检会直接失败。",
+                    ],
+                },
             },
         }
 
@@ -355,21 +427,36 @@ class DesktopBridgeApp:
         return course
 
     def _get_planning_target_payload(self, target_id: str) -> dict[str, Any]:
+        target = self._planning_target_repository.get(target_id)
+        if target is None:
+            raise ValueError("Planning target does not exist.")
+
         result = asdict(self._planning_service.get_target_result(target_id))
+        scenarios = self._planning_scenario_repository.list_by_target_id(target_id)
         expectation_map = {
             scenario.id: self._expectation_repository.list_by_scenario_id(scenario.id)
-            for scenario in self._planning_scenario_repository.list_by_target_id(target_id)
+            for scenario in scenarios
         }
+        last_updated_at = target.created_at
 
         for scenario in result["scenarios"]:
+            scenario_expectations = expectation_map.get(scenario["scenario_id"], [])
             scenario["expectations"] = [
                 {
                     "course_id": expectation.course_id,
                     "raw_score": expectation.expected_score_raw,
                     "grade_point": expectation.expected_grade_point,
                 }
-                for expectation in expectation_map.get(scenario["scenario_id"], [])
+                for expectation in scenario_expectations
             ]
+            if scenario_expectations:
+                scenario_last_updated_at = max(
+                    expectation.updated_at for expectation in scenario_expectations
+                )
+                if scenario_last_updated_at > last_updated_at:
+                    last_updated_at = scenario_last_updated_at
+
+        result["last_updated_at"] = last_updated_at
 
         return result
 

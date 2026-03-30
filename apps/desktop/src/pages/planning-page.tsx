@@ -1,5 +1,14 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Calculator, RefreshCw, Save, Target } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  Calculator,
+  Clock3,
+  History,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Target,
+} from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { AsyncButton } from "@/components/shared/async-button";
 import { PageHero } from "@/components/shared/page-hero";
 import { InlineMessage } from "@/components/shared/status-message";
@@ -14,7 +23,7 @@ import {
   useSavePlanningExpectationsMutation,
   useSnapshotQuery,
 } from "@/hooks/use-snapshot-query";
-import { formatCredit, formatDecimal, formatScenarioLabel } from "@/lib/format";
+import { formatCredit, formatDateTime, formatDecimal, formatScenarioLabel } from "@/lib/format";
 import { gradeScoreOptions } from "@/lib/score";
 import type { CourseRecord, PlanningExpectationSavePayload, PlanningTargetResult } from "@/types/domain";
 
@@ -32,6 +41,10 @@ function buildExpectationDrafts(planning: PlanningTargetResult | null) {
   return nextDrafts;
 }
 
+function normalizeDraftValue(value: string | null | undefined) {
+  return (value ?? "").trim();
+}
+
 function validateTargetGpa(targetGpa: string) {
   const numeric = Number(targetGpa);
   if (!Number.isFinite(numeric) || numeric < 0 || numeric > 4) {
@@ -41,40 +54,101 @@ function validateTargetGpa(targetGpa: string) {
 }
 
 export function PlanningPage() {
+  const [searchParams] = useSearchParams();
   const { data, isFetching, refetch } = useSnapshotQuery();
   const createPlanningTargetMutation = useCreatePlanningTargetMutation();
   const savePlanningExpectationsMutation = useSavePlanningExpectationsMutation();
+  const savedPlanningRef = useRef<HTMLDivElement | null>(null);
+  const lastHydratedPlanningKeyRef = useRef<string | null>(null);
 
   const courses = data?.courses ?? [];
   const plannedCourses = courses.filter((course) => course.status === "PLANNED");
   const planning = data?.latestPlanning ?? null;
   const planningScenarios = planning?.scenarios ?? [];
+  const savedDrafts = useMemo(() => buildExpectationDrafts(planning), [planning]);
+  const partialScenarios = useMemo(
+    () => planning?.scenarios.filter((scenario) => !scenario.isFullCoverage) ?? [],
+    [planning],
+  );
   const planningFeasibilityLabel =
-    planning?.feasible === null
-      ? "待计算"
-      : planning?.feasible
-        ? "可达成"
-        : "不可达";
+    planning?.feasible === null ? "待计算" : planning?.feasible ? "可达成" : "不可达";
 
   const [targetGpa, setTargetGpa] = useState("3.820");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (planning?.targetGpa) {
-      setTargetGpa(planning.targetGpa);
+  const dirtySummary = useMemo(() => {
+    if (!planning) {
+      return {
+        changedExpectationCount: 0,
+        changedScenarioCount: 0,
+      };
     }
-  }, [planning?.targetGpa]);
+
+    let changedExpectationCount = 0;
+    const changedScenarioIds = new Set<string>();
+
+    for (const scenario of planning.scenarios) {
+      for (const course of plannedCourses) {
+        const key = makeDraftKey(scenario.scenarioId, course.id);
+        const currentValue = normalizeDraftValue(drafts[key]);
+        const savedValue = normalizeDraftValue(savedDrafts[key]);
+        if (currentValue !== savedValue) {
+          changedExpectationCount += 1;
+          changedScenarioIds.add(scenario.scenarioId);
+        }
+      }
+    }
+
+    return {
+      changedExpectationCount,
+      changedScenarioCount: changedScenarioIds.size,
+    };
+  }, [drafts, plannedCourses, planning, savedDrafts]);
+
+  const isTargetDirty = planning ? normalizeDraftValue(targetGpa) !== planning.targetGpa : false;
+  const hasUnsavedChanges = isTargetDirty || dirtySummary.changedExpectationCount > 0;
+  const planningKey = planning ? `${planning.targetId}:${planning.lastUpdatedAt}` : "empty";
+  const focusSavedPlanning = searchParams.get("focus") === "saved";
 
   useEffect(() => {
-    setDrafts(buildExpectationDrafts(planning));
-    setFormError(null);
-  }, [planning]);
+    const previousKey = lastHydratedPlanningKeyRef.current;
+    if (previousKey === planningKey) {
+      return;
+    }
 
-  const partialScenarios = useMemo(
-    () => planning?.scenarios.filter((scenario) => !scenario.isFullCoverage) ?? [],
-    [planning],
-  );
+    const previousTargetId = previousKey?.split(":")[0] ?? null;
+    const currentTargetId = planning?.targetId ?? null;
+    const shouldHydrate = previousKey === null || previousTargetId !== currentTargetId || !hasUnsavedChanges;
+
+    if (!planning) {
+      if (shouldHydrate) {
+        setTargetGpa("3.820");
+        setDrafts({});
+        setFormError(null);
+      }
+      lastHydratedPlanningKeyRef.current = planningKey;
+      return;
+    }
+
+    if (shouldHydrate) {
+      setTargetGpa(planning.targetGpa);
+      setDrafts(buildExpectationDrafts(planning));
+      setFormError(null);
+      lastHydratedPlanningKeyRef.current = planningKey;
+    }
+  }, [hasUnsavedChanges, planning, planningKey]);
+
+  useEffect(() => {
+    if (!focusSavedPlanning || !planning || !savedPlanningRef.current) {
+      return;
+    }
+
+    savedPlanningRef.current.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, [focusSavedPlanning, planning]);
 
   const handleCreateTarget = () => {
     const validationError = validateTargetGpa(targetGpa);
@@ -88,6 +162,7 @@ export function PlanningPage() {
       onSuccess: (result) => {
         setTargetGpa(result.targetGpa);
         setDrafts(buildExpectationDrafts(result));
+        lastHydratedPlanningKeyRef.current = `${result.targetId}:${result.lastUpdatedAt}`;
       },
       onError: (error) => {
         setFormError(error instanceof Error ? error.message : "创建目标 GPA 失败。");
@@ -126,7 +201,7 @@ export function PlanningPage() {
         plannedCourses.map((course) => ({
           scenarioId: scenario.scenarioId,
           courseId: course.id,
-          rawScore: (drafts[makeDraftKey(scenario.scenarioId, course.id)] ?? "").trim() || null,
+          rawScore: normalizeDraftValue(drafts[makeDraftKey(scenario.scenarioId, course.id)]) || null,
           scoreType: course.scoreType,
         })),
       ),
@@ -135,6 +210,7 @@ export function PlanningPage() {
     savePlanningExpectationsMutation.mutate(payload, {
       onSuccess: (result) => {
         setDrafts(buildExpectationDrafts(result));
+        lastHydratedPlanningKeyRef.current = `${result.targetId}:${result.lastUpdatedAt}`;
       },
       onError: (error) => {
         setFormError(error instanceof Error ? error.message : "保存预期成绩失败。");
@@ -142,15 +218,26 @@ export function PlanningPage() {
     });
   };
 
+  const restoreSavedPlanning = () => {
+    if (!planning) {
+      return;
+    }
+
+    setTargetGpa(planning.targetGpa);
+    setDrafts(buildExpectationDrafts(planning));
+    setFormError(null);
+    lastHydratedPlanningKeyRef.current = `${planning.targetId}:${planning.lastUpdatedAt}`;
+  };
+
   return (
     <div className="flex flex-col gap-6">
       <PageHero
         eyebrow="Planning Workspace"
-        title="目标 GPA、未修课程预期成绩和三情景结果现在共享同一条真实计算链路。"
-        description="先创建规划目标，再把每门未修课程在乐观、中性、保守三种场景下的预期成绩保存进去，结果会立刻重算。"
+        title="最近一次规划结果和当前本地编辑需要被明确分开，才能真正适合长期反复使用。"
+        description="规划页现在把“最近一次保存结果”当作稳定锚点展示；你在编辑区里改目标或改预期成绩时，会明确提示哪些内容还只是本地草稿。"
         actions={
           <>
-            <Badge variant="outline">目标 GPA 倒推</Badge>
+            <Badge variant="outline">历史规划恢复</Badge>
             <Button variant="secondary" onClick={() => void refetch()} disabled={isFetching}>
               <RefreshCw data-icon="inline-start" className={isFetching ? "animate-spin" : ""} />
               {isFetching ? "同步中" : "刷新快照"}
@@ -159,131 +246,259 @@ export function PlanningPage() {
         }
       />
 
-      {partialScenarios.length ? (
-        <InlineMessage tone="warning">
-          当前仍有 {partialScenarios.length} 个情景未覆盖全部未修课程，结果仅代表已填写课程范围内的模拟值。
+      {planning ? (
+        <div className="flex flex-col gap-3">
+          <InlineMessage tone={hasUnsavedChanges ? "warning" : "info"}>
+            {hasUnsavedChanges
+              ? `当前有未保存规划草稿：${isTargetDirty ? "目标 GPA 已改动" : "目标 GPA 未改动"}，${
+                  dirtySummary.changedExpectationCount
+                } 个情景单元格与最近一次保存结果不同。下方三情景结果仍然展示最近一次已保存结果。`
+              : "当前编辑区已与最近一次保存结果同步，可以继续查看历史结论，也可以直接开始下一轮调整。"}
+          </InlineMessage>
+          {partialScenarios.length ? (
+            <InlineMessage tone="warning">
+              最近一次保存结果里仍有 {partialScenarios.length} 个情景未覆盖全部未修课程，相关模拟值只代表已填写课程范围。
+            </InlineMessage>
+          ) : null}
+        </div>
+      ) : (
+        <InlineMessage tone="neutral">
+          当前还没有历史规划。先创建目标 GPA，后续首页和规划页都会自动保留最近一次结果。
         </InlineMessage>
-      ) : null}
+      )}
 
       {formError ? <InlineMessage tone="error">{formError}</InlineMessage> : null}
 
-      <section className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
-        <Card>
-          <CardHeader>
-            <CardTitle>目标输入区</CardTitle>
-            <CardDescription>
-              创建或重建目标 GPA 时，会按当前成绩基线重新计算未来平均绩点要求。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <Field label="Target GPA">
-              <Input
-                value={targetGpa}
-                onChange={(event) => setTargetGpa(event.target.value)}
-                placeholder="例如：3.820"
-              />
-            </Field>
-
-            <AsyncButton
-              onClick={handleCreateTarget}
-              pending={createPlanningTargetMutation.isPending}
-              idleLabel="创建 / 重建目标"
-              pendingLabel="计算中..."
-              icon={<Calculator data-icon="inline-start" />}
-            />
-
-            <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4 text-sm leading-7 text-foreground/76">
-              当前基线：已计入 GPA 学分 {formatCredit(planning?.basedOnCompletedCreditSum)}，当前 GPA{" "}
-              {formatDecimal(planning?.basedOnCurrentGpa)}。
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>规划结论</CardTitle>
-            <CardDescription>
-              这里直接汇总未来平均绩点要求、目标可达性和解释文本，不需要再手工换算。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-[28px] border border-white/8 bg-gradient-to-br from-accent/14 to-transparent p-5">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-accent">
-                <Target className="size-3.5" />
-                Required Future Average
-              </div>
-              <div className="mt-3 text-4xl font-semibold tracking-[-0.06em] text-foreground">
-                {formatDecimal(planning?.requiredFutureAverageGp)}
-              </div>
-              <div className="mt-4 text-sm leading-7 text-foreground/76">
-                {planning?.requiredScoreText ?? "先创建目标 GPA，这里才会显示未来平均要求。"}
-              </div>
-            </div>
-
-            <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
-              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                Feasibility
-              </div>
-              <div className="mt-3 text-3xl font-semibold tracking-tight text-foreground">
-                {planningFeasibilityLabel}
-              </div>
-              <div className="mt-4 text-sm leading-7 text-foreground/76">
-                {planning?.infeasibleReason ?? "当前目标在现有课程边界内仍可继续推演。"}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="grid gap-4 lg:grid-cols-3">
-        {planning?.scenarios.map((scenario) => (
+      <section className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
+        <div ref={savedPlanningRef}>
           <Card
-            key={scenario.scenarioId}
-            className={scenario.isFullCoverage ? "" : "border-red-400/18 shadow-[0_28px_90px_-44px_rgba(248,113,113,0.42)]"}
+            className={
+              focusSavedPlanning
+                ? "border-accent/22 shadow-[0_28px_90px_-36px_rgba(111,219,255,0.24)]"
+                : undefined
+            }
           >
             <CardHeader>
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <CardTitle>{formatScenarioLabel(scenario.scenarioType)}</CardTitle>
-                  <CardDescription>
-                    覆盖 {scenario.expectationCount} / {plannedCourses.length} 门未修课程
-                  </CardDescription>
-                </div>
-                <Badge variant={scenario.isFullCoverage ? "success" : "destructive"}>
-                  {scenario.isFullCoverage ? "已全覆盖" : "未全覆盖"}
-                </Badge>
-              </div>
+              <CardTitle>最近一次保存的规划</CardTitle>
+              <CardDescription>
+                这是应用关闭后也能快速恢复的稳定结果视图，不会被当前页里的未保存草稿直接覆盖。
+              </CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              <div className="text-4xl font-semibold tracking-[-0.06em] text-foreground">
-                {formatDecimal(scenario.simulatedFinalGpa)}
-              </div>
-              <div className="text-sm leading-6 text-muted-foreground">
-                已覆盖 {formatCredit(scenario.coveredPlannedCredit)} 学分，倒推未来平均绩点要求{" "}
-                {formatDecimal(scenario.requiredFutureAverageGp)}。
-              </div>
+            <CardContent className="flex flex-col gap-4">
+              {planning ? (
+                <>
+                  <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-5">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-accent">
+                      <History className="size-3.5" />
+                      Saved Target
+                    </div>
+                    <div className="mt-3 text-5xl font-semibold tracking-[-0.06em] text-foreground">
+                      {formatDecimal(planning.targetGpa)}
+                    </div>
+                    <div className="mt-4 flex items-center gap-2 text-sm text-foreground/76">
+                      <Clock3 className="size-4 text-accent" />
+                      最近更新 {formatDateTime(planning.lastUpdatedAt)}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <SnapshotStat
+                      label="可达性"
+                      value={planningFeasibilityLabel}
+                      description={planning.infeasibleReason ?? "当前目标仍然可以继续推进。"}
+                    />
+                    <SnapshotStat
+                      label="未修总学分"
+                      value={formatCredit(planning.plannedCreditSum)}
+                      description="这是最近一次规划覆盖的未修课程总量。"
+                    />
+                  </div>
+
+                  <Button variant="secondary" onClick={restoreSavedPlanning} disabled={!hasUnsavedChanges}>
+                    <RotateCcw data-icon="inline-start" />
+                    恢复到最近保存结果
+                  </Button>
+                </>
+              ) : (
+                <div className="rounded-[24px] border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm leading-7 text-muted-foreground">
+                  还没有历史规划结果。创建目标后，这里会固定显示目标 GPA、最近更新时间和最近一次保存的摘要。
+                </div>
+              )}
             </CardContent>
           </Card>
-        )) ?? null}
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>当前编辑区</CardTitle>
+            <CardDescription>
+              这里承载新的目标输入和本地草稿。只有在你明确点击保存或重建后，历史规划结果才会被更新。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="flex flex-col gap-4">
+              <Field label="Target GPA">
+                <Input
+                  value={targetGpa}
+                  onChange={(event) => setTargetGpa(event.target.value)}
+                  placeholder="例如：3.820"
+                />
+              </Field>
+
+              <AsyncButton
+                onClick={handleCreateTarget}
+                pending={createPlanningTargetMutation.isPending}
+                idleLabel={planning ? "重建目标并刷新历史结果" : "创建目标"}
+                pendingLabel="计算中..."
+                icon={<Calculator data-icon="inline-start" />}
+              />
+
+              <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4 text-sm leading-7 text-foreground/76">
+                当前基线：已计入 GPA 学分 {formatCredit(planning?.basedOnCompletedCreditSum ?? data?.summary.countedCreditSum)}，
+                当前 GPA {formatDecimal(planning?.basedOnCurrentGpa ?? data?.summary.currentGpa)}。
+              </div>
+            </div>
+
+            <div className="grid gap-3">
+              <SnapshotStat
+                label="目标输入状态"
+                value={planning ? (isTargetDirty ? "未保存" : "已同步") : "待创建"}
+                description={
+                  planning
+                    ? isTargetDirty
+                      ? `当前输入 ${normalizeDraftValue(targetGpa) || "--"} 尚未写回最近一次保存结果。`
+                      : "当前输入与最近一次保存的目标 GPA 一致。"
+                    : "先创建一个目标 GPA，后续才会生成完整的历史结果。"
+                }
+              />
+              <SnapshotStat
+                label="本地草稿改动"
+                value={`${dirtySummary.changedExpectationCount}`}
+                description={
+                  planning
+                    ? dirtySummary.changedExpectationCount
+                      ? `共影响 ${dirtySummary.changedScenarioCount} 个情景，保存后才会重算三情景结果。`
+                      : "当前没有未保存的预期成绩改动。"
+                    : "还没有可编辑的历史规划草稿。"
+                }
+              />
+            </div>
+          </CardContent>
+        </Card>
       </section>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>最近一次保存结论</CardTitle>
+          <CardDescription>
+            这里固定显示最近一次已经落库的规划解释，避免把正在编辑的草稿误认为已经生效。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-[28px] border border-white/8 bg-gradient-to-br from-accent/14 to-transparent p-5">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-accent">
+              <Target className="size-3.5" />
+              Required Future Average
+            </div>
+            <div className="mt-3 text-4xl font-semibold tracking-[-0.06em] text-foreground">
+              {formatDecimal(planning?.requiredFutureAverageGp)}
+            </div>
+            <div className="mt-4 text-sm leading-7 text-foreground/76">
+              {planning?.requiredScoreText ?? "先创建目标 GPA，这里才会显示未来平均要求。"}
+            </div>
+          </div>
+
+          <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
+            <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+              Feasibility
+            </div>
+            <div className="mt-3 text-3xl font-semibold tracking-tight text-foreground">
+              {planningFeasibilityLabel}
+            </div>
+            <div className="mt-4 text-sm leading-7 text-foreground/76">
+              {planning?.infeasibleReason ?? "当前目标在现有课程边界内仍可继续推演。"}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <section className="flex items-center justify-between gap-4">
+        <div>
+          <div className="text-lg font-semibold tracking-tight text-foreground">最近一次保存的三情景结果</div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            三张卡片只显示已保存结果；本地草稿改动不会在保存前混入这里。
+          </div>
+        </div>
+        {planning ? <Badge variant="secondary">最近更新 {formatDateTime(planning.lastUpdatedAt)}</Badge> : null}
+      </section>
+
+      {planning?.scenarios.length ? (
+        <section className="grid gap-4 lg:grid-cols-3">
+          {planning.scenarios.map((scenario) => (
+            <Card
+              key={scenario.scenarioId}
+              className={
+                scenario.isFullCoverage
+                  ? ""
+                  : "border-red-400/18 shadow-[0_28px_90px_-44px_rgba(248,113,113,0.42)]"
+              }
+            >
+              <CardHeader>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <CardTitle>{formatScenarioLabel(scenario.scenarioType)}</CardTitle>
+                    <CardDescription>
+                      覆盖 {scenario.expectationCount} / {plannedCourses.length} 门未修课程
+                    </CardDescription>
+                  </div>
+                  <Badge variant={scenario.isFullCoverage ? "success" : "destructive"}>
+                    {scenario.isFullCoverage ? "已全覆盖" : "未全覆盖"}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3">
+                <div className="text-4xl font-semibold tracking-[-0.06em] text-foreground">
+                  {formatDecimal(scenario.simulatedFinalGpa)}
+                </div>
+                <div className="text-sm leading-6 text-muted-foreground">
+                  已覆盖 {formatCredit(scenario.coveredPlannedCredit)} 学分，倒推未来平均绩点要求{" "}
+                  {formatDecimal(scenario.requiredFutureAverageGp)}。
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </section>
+      ) : (
+        <InlineMessage tone="neutral">
+          还没有历史三情景结果。先创建目标 GPA，再保存未修课程预期成绩，这里才会出现三情景卡片。
+        </InlineMessage>
+      )}
 
       <Card>
         <CardHeader className="gap-3">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <CardTitle>未修课程预期成绩矩阵</CardTitle>
+              <CardTitle>未修课程预期成绩编辑区</CardTitle>
               <CardDescription>
-                每一列对应一个规划情景。保存后会直接重算三情景结果，并把未全覆盖状态标红提示。
+                输入框里的值都是当前草稿。每个单元格都会明确提示“已保存值”和“本地未保存值”的差异。
               </CardDescription>
             </div>
-            <AsyncButton
-              onClick={handleSaveExpectations}
-              disabled={!planning || !plannedCourses.length}
-              pending={savePlanningExpectationsMutation.isPending}
-              idleLabel="保存预期并重算"
-              pendingLabel="保存并重算中..."
-              icon={<Save data-icon="inline-start" />}
-            />
+            <div className="flex flex-wrap items-center gap-3">
+              {planning ? (
+                <Button variant="secondary" onClick={restoreSavedPlanning} disabled={!hasUnsavedChanges}>
+                  <RotateCcw data-icon="inline-start" />
+                  放弃本地草稿
+                </Button>
+              ) : null}
+              <AsyncButton
+                onClick={handleSaveExpectations}
+                disabled={!planning || !plannedCourses.length}
+                pending={savePlanningExpectationsMutation.isPending}
+                idleLabel="保存预期并重算"
+                pendingLabel="保存并重算中..."
+                icon={<Save data-icon="inline-start" />}
+              />
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -358,6 +573,9 @@ function ScenarioInputCell({
   onChange: (value: string) => void;
 }) {
   const expectation = scenario.expectations.find((item) => item.courseId === course.id) ?? null;
+  const currentValue = normalizeDraftValue(value);
+  const savedValue = normalizeDraftValue(expectation?.rawScore);
+  const isDirty = currentValue !== savedValue;
 
   if (course.scoreType === null) {
     return (
@@ -382,11 +600,31 @@ function ScenarioInputCell({
         <Input value={value} onChange={(event) => onChange(event.target.value)} placeholder="例如：92" />
       )}
 
-      <div className="text-xs leading-5 text-muted-foreground">
-        {expectation
-          ? `已保存：${expectation.rawScore} / 绩点 ${formatDecimal(expectation.gradePoint, 3, "--")}`
-          : "当前情景尚未保存这门课程的预期成绩。"}
+      <div className={`text-xs leading-5 ${isDirty ? "text-amber-100" : "text-muted-foreground"}`}>
+        {isDirty
+          ? `本地草稿：${currentValue || "准备清空"} · 已保存：${savedValue || "未填写"}`
+          : expectation
+            ? `已保存：${expectation.rawScore} / 绩点 ${formatDecimal(expectation.gradePoint, 3, "--")}`
+            : "当前情景尚未保存这门课程的预期成绩。"}
       </div>
+    </div>
+  );
+}
+
+function SnapshotStat({
+  label,
+  value,
+  description,
+}: {
+  label: string;
+  value: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-[22px] border border-white/8 bg-white/[0.04] p-4">
+      <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">{label}</div>
+      <div className="mt-2 text-3xl font-semibold tracking-tight text-foreground">{value}</div>
+      <div className="mt-3 text-sm leading-6 text-foreground/72">{description}</div>
     </div>
   );
 }

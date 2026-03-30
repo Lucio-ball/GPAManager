@@ -80,6 +80,7 @@ export type PlanningScenarioResult = {
 export type PlanningTargetResult = {
   targetId: string;
   targetGpa: string;
+  lastUpdatedAt: string;
   basedOnCurrentGpa: string;
   basedOnCompletedCreditSum: string;
   plannedCreditSum: string;
@@ -133,6 +134,19 @@ export type ImportWorkbenchResult = {
   skipped: ImportSkippedDetail[];
 };
 
+export type ImportTemplateFieldGuide = {
+  name: string;
+  required: boolean;
+  description: string;
+};
+
+export type ImportTemplateDefinition = {
+  title: string;
+  textExample: string;
+  fieldGuides: ImportTemplateFieldGuide[];
+  commonMistakes: string[];
+};
+
 export type AppSnapshot = {
   summary: GpaSummary;
   courses: CourseRecord[];
@@ -140,5 +154,7 @@ export type AppSnapshot = {
   importTemplates: {
     courseTextExample: string;
     scoreTextExample: string;
+    course: ImportTemplateDefinition;
+    score: ImportTemplateDefinition;
   };
 };

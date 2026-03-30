@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   CheckCheck,
   CircleAlert,
+  Copy,
   FileDown,
   FolderArchive,
   ScanSearch,
@@ -11,6 +12,7 @@ import {
 import { useSearchParams } from "react-router-dom";
 import { useAppPreferences } from "@/components/shared/app-preferences";
 import { AsyncButton } from "@/components/shared/async-button";
+import { useAppFeedback } from "@/components/shared/feedback-center";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { PageHero } from "@/components/shared/page-hero";
 import { InlineMessage } from "@/components/shared/status-message";
@@ -24,7 +26,7 @@ import {
   useImportMutation,
   useSnapshotQuery,
 } from "@/hooks/use-snapshot-query";
-import type { ImportKind, ImportWorkbenchResult } from "@/types/domain";
+import type { ImportKind, ImportTemplateDefinition, ImportWorkbenchResult } from "@/types/domain";
 
 type ImportDrafts = Record<ImportKind, string>;
 type ImportReportState = Record<ImportKind, ImportWorkbenchResult | undefined>;
@@ -59,6 +61,7 @@ function normalizeImportKind(value: string | null): ImportKind {
 export function ImportPage() {
   const [searchParams] = useSearchParams();
   const { preferences } = useAppPreferences();
+  const feedback = useAppFeedback();
   const snapshotQuery = useSnapshotQuery();
   const importMutation = useImportMutation();
   const backupMutation = useCreateBackupMutation();
@@ -83,6 +86,8 @@ export function ImportPage() {
   const currentText = drafts[kind];
   const currentResult = reports[kind];
   const currentPreview = previews[kind];
+  const currentTemplate =
+    snapshotQuery.data?.importTemplates[kind === "COURSE" ? "course" : "score"] ?? null;
   const previewMatchesCurrentText = currentPreview?.text === currentText;
   const isPreviewing = importMutation.isPending && importMutation.variables?.apply === false;
   const isApplying = importMutation.isPending && importMutation.variables?.apply === true;
@@ -116,6 +121,27 @@ export function ImportPage() {
         ? snapshotQuery.data.importTemplates.courseTextExample
         : snapshotQuery.data.importTemplates.scoreTextExample,
     );
+  };
+
+  const copyTemplate = async () => {
+    const templateText =
+      kind === "COURSE"
+        ? snapshotQuery.data?.importTemplates.courseTextExample
+        : snapshotQuery.data?.importTemplates.scoreTextExample;
+
+    if (!templateText) {
+      setLocalError("模板还没加载完成，请稍后再试。");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(templateText);
+      setLocalError(null);
+      feedback.success("模板已复制", "已复制到剪贴板，可以直接粘贴后开始修改。");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "无法写入剪贴板。";
+      setLocalError(`复制模板失败：${message}`);
+    }
   };
 
   const runPreview = () => {
@@ -222,6 +248,7 @@ export function ImportPage() {
             onPreview={runPreview}
             onApply={() => void requestApply()}
             onLoadTemplate={loadTemplate}
+            onCopyTemplate={() => void copyTemplate()}
             isSnapshotLoading={snapshotQuery.isLoading}
             snapshotError={
               snapshotQuery.isError
@@ -231,6 +258,7 @@ export function ImportPage() {
                 : null
             }
             localError={localError}
+            template={currentTemplate}
             preferencesSummary={
               preferences.importConfirmRequired
                 ? preferences.backupBeforeImport
@@ -258,6 +286,7 @@ export function ImportPage() {
             onPreview={runPreview}
             onApply={() => void requestApply()}
             onLoadTemplate={loadTemplate}
+            onCopyTemplate={() => void copyTemplate()}
             isSnapshotLoading={snapshotQuery.isLoading}
             snapshotError={
               snapshotQuery.isError
@@ -267,6 +296,7 @@ export function ImportPage() {
                 : null
             }
             localError={localError}
+            template={currentTemplate}
             preferencesSummary={
               preferences.importConfirmRequired
                 ? preferences.backupBeforeImport
@@ -315,9 +345,11 @@ function ImportWorkbench({
   onPreview,
   onApply,
   onLoadTemplate,
+  onCopyTemplate,
   isSnapshotLoading,
   snapshotError,
   localError,
+  template,
   preferencesSummary,
 }: {
   kind: ImportKind;
@@ -333,9 +365,11 @@ function ImportWorkbench({
   onPreview: () => void;
   onApply: () => void;
   onLoadTemplate: () => void;
+  onCopyTemplate: () => void;
   isSnapshotLoading: boolean;
   snapshotError: string | null;
   localError: string | null;
+  template: ImportTemplateDefinition | null;
   preferencesSummary: string;
 }) {
   const reportTone = result?.applied
@@ -394,10 +428,6 @@ function ImportWorkbench({
           </div>
 
           <div className="flex flex-wrap gap-3">
-            <Button variant="secondary" onClick={onLoadTemplate} disabled={isPreviewing || isApplying}>
-              <TextSearch data-icon="inline-start" />
-              加载示例模板
-            </Button>
             <AsyncButton
               variant="secondary"
               onClick={onPreview}
@@ -426,6 +456,14 @@ function ImportWorkbench({
       </Card>
 
       <div className="flex flex-col gap-4">
+        <ImportTemplateCard
+          kind={kind}
+          template={template}
+          isSnapshotLoading={isSnapshotLoading}
+          onCopyTemplate={onCopyTemplate}
+          onLoadTemplate={onLoadTemplate}
+        />
+
         <Card>
           <CardHeader>
             <CardTitle>导入反馈</CardTitle>
@@ -519,6 +557,107 @@ function ImportWorkbench({
   );
 }
 
+function ImportTemplateCard({
+  kind,
+  template,
+  isSnapshotLoading,
+  onCopyTemplate,
+  onLoadTemplate,
+}: {
+  kind: ImportKind;
+  template: ImportTemplateDefinition | null;
+  isSnapshotLoading: boolean;
+  onCopyTemplate: () => void;
+  onLoadTemplate: () => void;
+}) {
+  const requiredFields = template?.fieldGuides.filter((field) => field.required) ?? [];
+  const optionalFields = template?.fieldGuides.filter((field) => !field.required) ?? [];
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{template?.title ?? (kind === "COURSE" ? "课程导入模板" : "成绩导入模板")}</CardTitle>
+        <CardDescription>模板内容直接跟随当前真实解析契约生成，查看和复制都在导入页内完成。</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        {isSnapshotLoading && !template ? (
+          <InlineMessage tone="neutral">正在加载内置模板…</InlineMessage>
+        ) : null}
+
+        {template ? (
+          <>
+            <div className="flex flex-wrap gap-3">
+              <Button variant="secondary" onClick={onCopyTemplate}>
+                <Copy data-icon="inline-start" />
+                一键复制模板
+              </Button>
+              <Button variant="outline" onClick={onLoadTemplate}>
+                <TextSearch data-icon="inline-start" />
+                写入编辑区
+              </Button>
+            </div>
+
+            <div className="rounded-[24px] border border-white/8 bg-black/20 p-4">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                Template Preview
+              </div>
+              <pre className="mt-3 whitespace-pre-wrap break-words font-mono text-[13px] leading-6 text-foreground/82">
+                {template.textExample}
+              </pre>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                最小字段说明
+              </div>
+              {requiredFields.map((field) => (
+                <div key={field.name} className="rounded-[22px] border border-white/8 bg-white/[0.04] p-4">
+                  <div className="flex items-center gap-2">
+                    <div className="font-mono text-sm text-foreground">{field.name}</div>
+                    <Badge variant="secondary">必填</Badge>
+                  </div>
+                  <div className="mt-2 text-sm leading-6 text-foreground/74">{field.description}</div>
+                </div>
+              ))}
+            </div>
+
+            {optionalFields.length ? (
+              <div className="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                  可选字段
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {optionalFields.map((field) => (
+                    <Badge key={field.name} variant="outline">
+                      {field.name}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="flex flex-col gap-3">
+              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                常见错误提醒
+              </div>
+              {template.commonMistakes.map((item) => (
+                <div
+                  key={item}
+                  className="rounded-[22px] border border-amber-400/16 bg-amber-400/8 p-4 text-sm leading-6 text-amber-100"
+                >
+                  {item}
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <InlineMessage tone="neutral">模板加载后，这里会显示可直接复制的真实导入格式。</InlineMessage>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ReportBanner({
   tone,
   result,
@@ -606,4 +745,3 @@ function ReportGroup({
     </div>
   );
 }
-

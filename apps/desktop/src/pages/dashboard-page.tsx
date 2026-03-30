@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import {
   ArrowRight,
   BookCopy,
+  Clock3,
   Compass,
   Flag,
   GraduationCap,
@@ -18,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useSnapshotQuery } from "@/hooks/use-snapshot-query";
-import { formatCredit, formatDecimal, formatScenarioLabel } from "@/lib/format";
+import { formatCredit, formatDateTime, formatDecimal, formatScenarioLabel } from "@/lib/format";
 
 function formatGapValue(target: string | null | undefined, current: string | null | undefined) {
   if (!target || !current) {
@@ -396,10 +397,19 @@ export function DashboardPage() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Link to="/planning?focus=saved" className="block">
+              <Card className="transition-all duration-200 hover:border-accent/22 hover:bg-white/[0.05] hover:shadow-[0_28px_90px_-36px_rgba(111,219,255,0.24)]">
               <CardHeader>
-                <CardTitle>最近规划摘要</CardTitle>
-                <CardDescription>这张卡片替代“最近导入结果”，直接告诉你最近一次规划是否完整、是否可达。</CardDescription>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <CardTitle>最近规划摘要</CardTitle>
+                    <CardDescription>点击这张卡片，就能回到规划页继续查看最近一次保存结果，不用再凭记忆重建。</CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-foreground/76">
+                    <Clock3 className="size-3.5 text-accent" />
+                    恢复查看
+                  </div>
+                </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
                 {latestPlanning ? (
@@ -413,6 +423,10 @@ export function DashboardPage() {
                       </div>
                       <div className="mt-3 text-sm leading-7 text-foreground/76">
                         {latestPlanning.requiredScoreText}
+                      </div>
+                      <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <Clock3 className="size-3.5 text-accent" />
+                        最近更新 {formatDateTime(latestPlanning.lastUpdatedAt)}
                       </div>
                     </div>
 
@@ -444,7 +458,8 @@ export function DashboardPage() {
                   </InlineMessage>
                 )}
               </CardContent>
-            </Card>
+              </Card>
+            </Link>
           </section>
 
           <section className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_420px]">

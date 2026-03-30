@@ -49,7 +49,7 @@ export function FeedbackProvider({ children }: PropsWithChildren) {
           <div
             key={item.id}
             className={cn(
-              "pointer-events-auto rounded-[24px] px-4 py-3 shadow-[0_24px_60px_-26px_rgba(0,0,0,0.86)] backdrop-blur-xl",
+              "pointer-events-auto rounded-[24px] px-4 py-3 shadow-[0_24px_60px_-30px_rgba(198,141,110,0.28)] backdrop-blur-xl",
               getMessageToneClasses(item.tone === "success" ? "success" : "error"),
             )}
           >
@@ -58,8 +58,8 @@ export function FeedbackProvider({ children }: PropsWithChildren) {
                 className={cn(
                   "mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-2xl",
                   item.tone === "success"
-                    ? "bg-emerald-400/14 text-emerald-200"
-                    : "bg-red-400/14 text-red-200",
+                    ? "bg-emerald-100 text-emerald-700"
+                    : "bg-red-100 text-red-700",
                 )}
               >
                 {item.tone === "success" ? (
@@ -71,13 +71,13 @@ export function FeedbackProvider({ children }: PropsWithChildren) {
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold text-foreground">{item.title}</div>
                 {item.description ? (
-                  <div className="mt-1 text-sm leading-6 text-foreground/78">{item.description}</div>
+                  <div className="mt-1 text-sm leading-6 text-foreground/72">{item.description}</div>
                 ) : null}
               </div>
               <button
                 type="button"
                 onClick={() => dismiss(item.id)}
-                className="rounded-full p-1 text-foreground/58 transition hover:bg-white/8 hover:text-foreground"
+                className="rounded-full p-1 text-foreground/48 transition hover:bg-[#fff1eb] hover:text-foreground"
                 aria-label="Dismiss notification"
               >
                 <X className="size-4" />

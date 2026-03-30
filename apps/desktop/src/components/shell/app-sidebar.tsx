@@ -19,12 +19,12 @@ const navigation = [
 
 export function AppSidebar() {
   return (
-    <aside className="border-b border-white/6 bg-[#080b12] lg:min-h-screen lg:border-b-0 lg:border-r">
+    <aside className="border-b border-[#ead8ce]/80 bg-[linear-gradient(180deg,rgba(255,251,247,0.96),rgba(251,241,233,0.9))] lg:min-h-screen lg:border-b-0 lg:border-r">
       <ScrollArea className="h-full">
         <div className="flex min-h-full flex-col gap-8 px-4 py-5 sm:px-6">
-          <div className="rounded-[28px] border border-white/8 bg-white/[0.04] p-5 shadow-[0_24px_80px_-42px_rgba(0,0,0,0.9)]">
+          <div className="rounded-[28px] border border-[#eadfd8] bg-white/78 p-5 shadow-[0_26px_80px_-44px_rgba(193,128,97,0.28)] backdrop-blur-xl">
             <div className="flex items-center gap-3">
-              <div className="flex size-11 items-center justify-center rounded-2xl bg-accent/15 text-accent ring-1 ring-accent/20">
+              <div className="flex size-11 items-center justify-center rounded-2xl bg-accent/16 text-[hsl(14,72%,53%)] ring-1 ring-accent/25">
                 <Gauge className="size-5" />
               </div>
               <div>
@@ -37,7 +37,7 @@ export function AppSidebar() {
               </div>
             </div>
             <p className="mt-4 text-sm leading-6 text-muted-foreground">
-              深色优先的本地学业控制台。信息密度适中，突出 GPA、剩余空间与导入质量。
+              奶油底的本地学业控制台。信息密度适中，突出 GPA、剩余空间与导入质量。
             </p>
           </div>
 
@@ -52,8 +52,8 @@ export function AppSidebar() {
                   className={({ isActive }) =>
                     cn(
                       "group rounded-[24px] border border-transparent px-4 py-3 transition-all duration-200",
-                      "hover:border-white/8 hover:bg-white/[0.045]",
-                      isActive && "border-white/8 bg-white/[0.07] shadow-[0_18px_48px_-30px_rgba(0,0,0,0.8)]",
+                      "hover:border-[#ebddd5] hover:bg-white/68",
+                      isActive && "border-[#e7d1c6] bg-[#fff2ea] shadow-[0_18px_52px_-32px_rgba(201,131,99,0.32)]",
                     )
                   }
                 >
@@ -63,8 +63,8 @@ export function AppSidebar() {
                         className={cn(
                           "mt-0.5 flex size-10 items-center justify-center rounded-2xl ring-1 transition-colors",
                           isActive
-                            ? "bg-accent/14 text-accent ring-accent/30"
-                            : "bg-white/[0.04] text-foreground/80 ring-white/8",
+                            ? "bg-accent/16 text-[hsl(14,72%,53%)] ring-accent/28"
+                            : "bg-white/72 text-foreground/75 ring-[#eadfd8]",
                         )}
                       >
                         <Icon className="size-4.5" />
@@ -82,7 +82,7 @@ export function AppSidebar() {
             })}
           </nav>
 
-          <div className="rounded-[24px] border border-white/8 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent p-4">
+          <div className="rounded-[24px] border border-[#eadfd8] bg-[linear-gradient(135deg,rgba(255,243,236,0.96),rgba(255,252,250,0.7)_55%,rgba(255,233,222,0.5))] p-4">
             <div className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
               Local Integration
             </div>

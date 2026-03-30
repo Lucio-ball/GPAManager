@@ -58,7 +58,7 @@ export function ConfirmDialog({
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         {requiresMatch ? (
-          <div className="mt-4 rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+          <div className="mt-4 rounded-[24px] border border-[#eadfd8] bg-white/70 p-4">
             <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
               二次确认
             </div>

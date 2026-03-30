@@ -588,7 +588,7 @@ export function ScoreManagementPage() {
                   : "成绩列表加载失败，请稍后重试。"}
               </InlineMessage>
             ) : selectedCourse ? (
-              <div className="rounded-[24px] border border-white/8 bg-white/[0.04] p-4">
+              <div className="rounded-[24px] border border-[#eadfd8] bg-white/78 p-4">
                 <div className="text-sm font-semibold text-foreground">{selectedCourse.name}</div>
                 <div className="mt-1 text-xs text-muted-foreground">{selectedCourse.semester}</div>
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -731,7 +731,7 @@ export function ScoreManagementPage() {
                       搜索、录入状态、学期、成绩类型和排序可以组合使用，最近一次视图会自动记忆。
                     </CardDescription>
                   </div>
-                  <div className="rounded-full border border-white/8 bg-white/[0.04] px-3 py-1 text-xs text-muted-foreground">
+                  <div className="rounded-full border border-[#eadfd8] bg-white/78 px-3 py-1 text-xs text-muted-foreground">
                     当前结果 {filteredCourses.length} / {completedCourses.length}
                   </div>
                 </div>
@@ -806,7 +806,7 @@ export function ScoreManagementPage() {
                       </Select>
                     </label>
 
-                    <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-3 text-sm leading-6 text-muted-foreground">
+                    <div className="rounded-[22px] border border-[#eadfd8] bg-white/70 px-4 py-3 text-sm leading-6 text-muted-foreground">
                       过滤条件和排序会在本地保存，下次回到成绩页时可直接延续上一次的工作上下文。
                     </div>
                   </div>
@@ -889,7 +889,7 @@ export function ScoreManagementPage() {
                         const isActive = selectedCourseId === course.id;
 
                         return (
-                          <TableRow key={course.id} id={`score-row-${course.id}`} className={isActive ? "bg-white/[0.05]" : ""}>
+                          <TableRow key={course.id} id={`score-row-${course.id}`} className={isActive ? "bg-[#fff2eb]" : ""}>
                             <TableCell className="font-medium text-foreground">{course.name}</TableCell>
                             <TableCell>{course.semester}</TableCell>
                             <TableCell>
@@ -986,7 +986,7 @@ function Field({
 
 function MetricCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-[22px] border border-white/8 bg-white/[0.04] p-4">
+    <div className="rounded-[22px] border border-[#eadfd8] bg-white/78 p-4">
       <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
         {label}
       </div>

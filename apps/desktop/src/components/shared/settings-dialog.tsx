@@ -77,12 +77,12 @@ function PreferenceToggle({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex items-start gap-3 rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+    <label className="flex items-start gap-3 rounded-[22px] border border-[#eadfd8] bg-white/70 p-4">
       <input
         type="checkbox"
         checked={checked}
         onChange={(event) => onChange(event.target.checked)}
-        className="mt-1 size-4 rounded border-white/15 bg-transparent accent-[var(--color-accent)]"
+        className="mt-1 size-4 rounded border-[#dcc9bf] bg-transparent accent-[var(--color-accent)]"
       />
       <div className="min-w-0">
         <div className="text-sm font-semibold text-foreground">{label}</div>
@@ -106,10 +106,10 @@ function StorageRow({
   onCopy: (value: string) => void;
 }) {
   return (
-    <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+    <div className="rounded-[24px] border border-[#eadfd8] bg-white/70 p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-white/[0.05] text-accent ring-1 ring-white/10">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-[#fff2eb] text-accent ring-1 ring-white/10">
             <Icon className="size-4.5" />
           </div>
           <div className="min-w-0">
@@ -133,7 +133,7 @@ function StorageRow({
 
 function StartupCheckRow({ item }: { item: StartupCheckItem }) {
   return (
-    <div className="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+    <div className="rounded-[22px] border border-[#eadfd8] bg-white/70 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="text-sm font-semibold text-foreground">{item.label}</div>
         <Badge variant={getHealthBadgeVariant(item.status)}>{item.status === "PASS" ? "通过" : "失败"}</Badge>
@@ -152,7 +152,7 @@ function BackupEntryRow({
   onRestore: (backup: DataBackupResult) => void;
 }) {
   return (
-    <div className="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+    <div className="rounded-[22px] border border-[#eadfd8] bg-white/70 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-sm font-semibold text-foreground">{backup.fileName}</div>
@@ -172,7 +172,7 @@ function BackupEntryRow({
 
 function OperationLogRow({ entry }: { entry: OperationLogRecord }) {
   return (
-    <div className="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+    <div className="rounded-[22px] border border-[#eadfd8] bg-white/70 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="text-sm font-semibold text-foreground">{entry.objectSummary}</div>
         <div className="flex items-center gap-2">
@@ -234,7 +234,7 @@ export function SettingsDialog() {
           </DialogHeader>
 
           <div className="mt-5 flex max-h-[70vh] flex-col gap-4 overflow-y-auto pr-1">
-            <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+            <div className="rounded-[24px] border border-[#eadfd8] bg-white/70 p-4">
               <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
                 Runtime
               </div>
@@ -262,7 +262,7 @@ export function SettingsDialog() {
             ) : null}
 
             {startupHealth ? (
-              <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+              <div className="rounded-[24px] border border-[#eadfd8] bg-white/70 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -334,7 +334,7 @@ export function SettingsDialog() {
             ) : null}
 
             <div className="grid gap-3 lg:grid-cols-2">
-              <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+              <div className="rounded-[24px] border border-[#eadfd8] bg-white/70 p-4">
                 <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <ShieldAlert className="size-4 text-accent" />
                   数据保护
@@ -361,7 +361,7 @@ export function SettingsDialog() {
                 </div>
               </div>
 
-              <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+              <div className="rounded-[24px] border border-[#eadfd8] bg-white/70 p-4">
                 <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <TerminalSquare className="size-4 text-accent" />
                   Bridge 信息
@@ -377,7 +377,7 @@ export function SettingsDialog() {
               </div>
             </div>
 
-            <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+            <div className="rounded-[24px] border border-[#eadfd8] bg-white/70 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -416,7 +416,7 @@ export function SettingsDialog() {
               </div>
             </div>
 
-            <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+            <div className="rounded-[24px] border border-[#eadfd8] bg-white/70 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -450,7 +450,7 @@ export function SettingsDialog() {
               </div>
             </div>
 
-            <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+            <div className="rounded-[24px] border border-[#eadfd8] bg-white/70 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-semibold text-foreground">录入默认偏好</div>

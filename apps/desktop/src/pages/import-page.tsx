@@ -398,7 +398,7 @@ function ImportWorkbench({
             <InlineMessage tone="neutral">正在加载导入模板…</InlineMessage>
           ) : null}
 
-          <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4 text-sm leading-6 text-muted-foreground">
+          <div className="rounded-[24px] border border-[#eadfd8] bg-white/70 p-4 text-sm leading-6 text-muted-foreground">
             <div className="font-medium text-foreground">格式提示</div>
             <div className="mt-2">
               {kind === "COURSE"
@@ -414,14 +414,14 @@ function ImportWorkbench({
             placeholder="请粘贴结构化文本。"
           />
 
-          <div className="rounded-[24px] border border-amber-400/16 bg-amber-400/8 p-4">
+          <div className="rounded-[24px] border border-amber-200 bg-amber-50 p-4">
             <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <ShieldAlert className="size-4 text-amber-200" />
+              <ShieldAlert className="size-4 text-amber-600" />
               导入保护策略
             </div>
             <div className="mt-2 text-sm leading-6 text-foreground/78">{preferencesSummary}</div>
             {!previewMatchesCurrentText && preview ? (
-              <div className="mt-2 text-sm leading-6 text-amber-100">
+              <div className="mt-2 text-sm leading-6 text-amber-800">
                 当前文本和上次预检结果不一致，请重新预检后再正式导入。
               </div>
             ) : null}
@@ -479,7 +479,7 @@ function ImportWorkbench({
             />
             <div className="grid grid-cols-2 gap-3">
               {stats.map((stat) => (
-                <div key={stat.label} className="rounded-[22px] border border-white/8 bg-white/[0.04] p-4">
+                <div key={stat.label} className="rounded-[22px] border border-[#eadfd8] bg-white/78 p-4">
                   <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                     {stat.label}
                   </div>
@@ -597,7 +597,7 @@ function ImportTemplateCard({
               </Button>
             </div>
 
-            <div className="rounded-[24px] border border-white/8 bg-black/20 p-4">
+            <div className="rounded-[24px] border border-[#eadfd8] bg-[#fff3ec] p-4">
               <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                 Template Preview
               </div>
@@ -611,7 +611,7 @@ function ImportTemplateCard({
                 最小字段说明
               </div>
               {requiredFields.map((field) => (
-                <div key={field.name} className="rounded-[22px] border border-white/8 bg-white/[0.04] p-4">
+                <div key={field.name} className="rounded-[22px] border border-[#eadfd8] bg-white/78 p-4">
                   <div className="flex items-center gap-2">
                     <div className="font-mono text-sm text-foreground">{field.name}</div>
                     <Badge variant="secondary">必填</Badge>
@@ -622,7 +622,7 @@ function ImportTemplateCard({
             </div>
 
             {optionalFields.length ? (
-              <div className="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+              <div className="rounded-[22px] border border-[#eadfd8] bg-white/70 p-4">
                 <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                   可选字段
                 </div>
@@ -643,7 +643,7 @@ function ImportTemplateCard({
               {template.commonMistakes.map((item) => (
                 <div
                   key={item}
-                  className="rounded-[22px] border border-amber-400/16 bg-amber-400/8 p-4 text-sm leading-6 text-amber-100"
+                  className="rounded-[22px] border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-800"
                 >
                   {item}
                 </div>
@@ -725,10 +725,10 @@ function ReportGroup({
 }) {
   const toneClass =
     tone === "success"
-      ? "border-emerald-400/18 bg-emerald-400/8"
+      ? "border-emerald-200 bg-emerald-50"
       : tone === "warning"
-        ? "border-amber-400/18 bg-amber-400/8"
-        : "border-red-400/18 bg-red-400/8";
+        ? "border-amber-200 bg-amber-50"
+        : "border-red-200 bg-red-50";
 
   return (
     <div className="flex flex-col gap-3">

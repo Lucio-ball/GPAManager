@@ -8,12 +8,13 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-foreground text-background shadow-[0_16px_48px_-18px_rgba(239,244,255,0.6)] hover:translate-y-[-1px] hover:bg-white",
-        secondary: "bg-white/[0.06] text-foreground ring-1 ring-white/8 hover:bg-white/[0.1]",
-        outline: "border border-white/10 bg-transparent text-foreground hover:bg-white/[0.05]",
-        ghost: "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground",
+        default:
+          "bg-[linear-gradient(135deg,rgba(255,180,159,0.98),rgba(255,144,113,0.98))] text-white shadow-[0_18px_40px_-20px_rgba(223,127,93,0.55)] hover:translate-y-[-1px] hover:brightness-[1.02]",
+        secondary: "bg-white/76 text-foreground ring-1 ring-[#eadfd8] hover:bg-[#fff1eb]",
+        outline: "border border-[#e9d8cf] bg-transparent text-foreground hover:bg-white/68",
+        ghost: "text-muted-foreground hover:bg-[#fff1eb] hover:text-foreground",
         destructive:
-          "bg-red-400/14 text-red-100 ring-1 ring-red-400/22 hover:bg-red-400/18 hover:text-red-50",
+          "bg-red-50 text-red-700 ring-1 ring-red-200 hover:bg-red-100 hover:text-red-800",
       },
       size: {
         default: "h-11 px-5",

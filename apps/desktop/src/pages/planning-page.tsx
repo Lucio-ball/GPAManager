@@ -369,7 +369,7 @@ export function PlanningPage() {
           <Card
             className={
               focusSavedPlanning
-                ? "border-accent/22 shadow-[0_28px_90px_-36px_rgba(111,219,255,0.24)]"
+                ? "border-accent/22 shadow-[0_28px_90px_-36px_rgba(223,127,93,0.22)]"
                 : undefined
             }
           >
@@ -382,7 +382,7 @@ export function PlanningPage() {
             <CardContent className="flex flex-col gap-4">
               {planning ? (
                 <>
-                  <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-5">
+                  <div className="rounded-[24px] border border-[#eadfd8] bg-white/70 p-5">
                     <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-accent">
                       <History className="size-3.5" />
                       Saved Target
@@ -415,7 +415,7 @@ export function PlanningPage() {
                   </Button>
                 </>
               ) : (
-                <div className="rounded-[24px] border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm leading-7 text-muted-foreground">
+                <div className="rounded-[24px] border border-dashed border-[#eadfd8] bg-white/70 p-5 text-sm leading-7 text-muted-foreground">
                   还没有历史规划结果。创建目标后，这里会固定显示目标 GPA、最近更新时间和最近一次保存的摘要。
                 </div>
               )}
@@ -454,7 +454,7 @@ export function PlanningPage() {
                 icon={<Calculator data-icon="inline-start" />}
               />
 
-              <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4 text-sm leading-7 text-foreground/76">
+              <div className="rounded-[24px] border border-[#eadfd8] bg-white/70 p-4 text-sm leading-7 text-foreground/76">
                 当前基线：已计入 GPA 学分 {formatCredit(planning?.basedOnCompletedCreditSum ?? data?.summary.countedCreditSum)}，
                 当前 GPA {formatDecimal(planning?.basedOnCurrentGpa ?? data?.summary.currentGpa)}。
               </div>
@@ -496,7 +496,7 @@ export function PlanningPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 lg:grid-cols-2">
-          <div className="rounded-[28px] border border-white/8 bg-gradient-to-br from-accent/14 to-transparent p-5">
+          <div className="rounded-[28px] border border-[#eadfd8] bg-gradient-to-br from-accent/14 to-transparent p-5">
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-accent">
               <Target className="size-3.5" />
               Required Future Average
@@ -509,7 +509,7 @@ export function PlanningPage() {
             </div>
           </div>
 
-          <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
+          <div className="rounded-[28px] border border-[#eadfd8] bg-white/70 p-5">
             <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
               Feasibility
             </div>
@@ -541,7 +541,7 @@ export function PlanningPage() {
               className={
                 scenario.isFullCoverage
                   ? ""
-                  : "border-red-400/18 shadow-[0_28px_90px_-44px_rgba(248,113,113,0.42)]"
+                  : "border-red-200 shadow-[0_28px_90px_-44px_rgba(248,113,113,0.22)]"
               }
             >
               <CardHeader>
@@ -680,7 +680,7 @@ function ScenarioInputCell({
 
   if (course.scoreType === null) {
     return (
-      <div className="rounded-[20px] border border-dashed border-red-400/18 bg-red-400/8 px-3 py-3 text-xs leading-6 text-red-100">
+      <div className="rounded-[20px] border border-dashed border-red-200 bg-red-50 px-3 py-3 text-xs leading-6 text-red-800">
         课程未设置成绩类型，无法保存该情景预期。
       </div>
     );
@@ -701,7 +701,7 @@ function ScenarioInputCell({
         <Input value={value} onChange={(event) => onChange(event.target.value)} placeholder="例如：92" />
       )}
 
-      <div className={`text-xs leading-5 ${isDirty ? "text-amber-100" : "text-muted-foreground"}`}>
+      <div className={`text-xs leading-5 ${isDirty ? "text-amber-800" : "text-muted-foreground"}`}>
         {isDirty
           ? `本地草稿：${currentValue || "准备清空"} · 已保存：${savedValue || "未填写"}`
           : expectation
@@ -722,7 +722,7 @@ function SnapshotStat({
   description: string;
 }) {
   return (
-    <div className="rounded-[22px] border border-white/8 bg-white/[0.04] p-4">
+    <div className="rounded-[22px] border border-[#eadfd8] bg-white/78 p-4">
       <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">{label}</div>
       <div className="mt-2 text-3xl font-semibold tracking-tight text-foreground">{value}</div>
       <div className="mt-3 text-sm leading-6 text-foreground/72">{description}</div>

@@ -38,14 +38,14 @@ export function MetricCard({
             <CardTitle className="mt-2 text-3xl font-semibold tracking-tight">{value}</CardTitle>
           </div>
           {trailing ?? (
-            <div className="flex size-10 items-center justify-center rounded-2xl bg-white/[0.05] text-muted-foreground ring-1 ring-white/8">
+            <div className="flex size-10 items-center justify-center rounded-2xl bg-[#fff2eb] text-muted-foreground ring-1 ring-[#eadfd8]">
               <ArrowUpRight className="size-4" />
             </div>
           )}
         </div>
         <CardDescription className="mt-3 text-sm leading-6">{label}</CardDescription>
       </CardHeader>
-      <CardContent className="relative pt-0 text-sm leading-6 text-foreground/78">
+      <CardContent className="relative pt-0 text-sm leading-6 text-foreground/72">
         {description}
       </CardContent>
     </Card>

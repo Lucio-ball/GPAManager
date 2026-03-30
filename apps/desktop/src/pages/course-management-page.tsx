@@ -783,7 +783,7 @@ export function CourseManagementPage() {
                       搜索、状态筛选、成绩类型筛选、是否已录入成绩筛选和排序可以叠加使用，适合高频回查与修正。
                     </CardDescription>
                   </div>
-                  <div className="rounded-full border border-white/8 bg-white/[0.04] px-3 py-1 text-xs text-muted-foreground">
+                  <div className="rounded-full border border-[#eadfd8] bg-white/78 px-3 py-1 text-xs text-muted-foreground">
                     当前结果 {filteredCourses.length} / {courses.length}
                   </div>
                 </div>
@@ -859,14 +859,14 @@ export function CourseManagementPage() {
                       </Select>
                     </label>
 
-                    <div className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-3 text-sm leading-6 text-muted-foreground">
+                    <div className="rounded-[22px] border border-[#eadfd8] bg-white/70 px-4 py-3 text-sm leading-6 text-muted-foreground">
                       当前视图会自动记忆，下次回到课程页时会恢复最近一次筛选和排序组合。
                     </div>
                   </div>
                 </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
-                <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                <div className="rounded-[24px] border border-[#eadfd8] bg-white/70 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -982,7 +982,7 @@ export function CourseManagementPage() {
                             type="checkbox"
                             checked={allFilteredSelected}
                             onChange={(event) => handleToggleSelectAllFiltered(event.target.checked)}
-                            className="size-4 rounded border-white/15 bg-transparent accent-[var(--color-accent)]"
+                            className="size-4 rounded border-[#dcc9bf] bg-transparent accent-[var(--color-accent)]"
                             aria-label="Select all filtered courses"
                           />
                         </TableHead>
@@ -1039,14 +1039,14 @@ export function CourseManagementPage() {
                           <TableRow
                             key={course.id}
                             id={`course-row-${course.id}`}
-                            className={isActive ? "bg-white/[0.05]" : ""}
+                            className={isActive ? "bg-[#fff2eb]" : ""}
                           >
                             <TableCell>
                               <input
                                 type="checkbox"
                                 checked={selectedCourseIds.includes(course.id)}
                                 onChange={() => handleToggleCourseSelection(course.id)}
-                                className="size-4 rounded border-white/15 bg-transparent accent-[var(--color-accent)]"
+                                className="size-4 rounded border-[#dcc9bf] bg-transparent accent-[var(--color-accent)]"
                                 aria-label={`Select ${course.name}`}
                               />
                             </TableCell>
@@ -1125,7 +1125,7 @@ export function CourseManagementPage() {
                 {formError ? <InlineMessage tone="error">{formError}</InlineMessage> : null}
 
                 {selectedCourse ? (
-                  <div className="rounded-[24px] border border-white/8 bg-white/[0.04] p-4">
+                  <div className="rounded-[24px] border border-[#eadfd8] bg-white/78 p-4">
                     <div className="text-sm font-semibold text-foreground">{selectedCourse.name}</div>
                     <div className="mt-1 text-xs text-muted-foreground">{selectedCourse.semester}</div>
                     <div className="mt-3 flex flex-wrap gap-2">

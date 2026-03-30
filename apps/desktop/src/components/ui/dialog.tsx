@@ -14,7 +14,7 @@ const DialogOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Overlay
     ref={ref}
-    className={cn("fixed inset-0 z-50 bg-black/72 backdrop-blur-sm", className)}
+    className={cn("fixed inset-0 z-50 bg-[rgba(116,72,47,0.16)] backdrop-blur-sm", className)}
     {...props}
   />
 ));
@@ -29,14 +29,14 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-1/2 top-1/2 z-50 w-[min(560px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-[32px] border border-white/10 bg-[#0f131b]/96 p-6 shadow-[0_40px_120px_-36px_rgba(0,0,0,0.92)] backdrop-blur-2xl",
+        "fixed left-1/2 top-1/2 z-50 w-[min(560px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-[32px] border border-[#eadfd8] bg-[rgba(255,250,246,0.98)] p-6 shadow-[0_40px_120px_-42px_rgba(198,141,110,0.3)] backdrop-blur-2xl",
         className,
       )}
       {...props}
     >
       {children}
       <DialogPrimitive.Close
-        className="absolute right-4 top-4 rounded-full p-2 text-muted-foreground transition hover:bg-white/[0.06] hover:text-foreground"
+        className="absolute right-4 top-4 rounded-full p-2 text-muted-foreground transition hover:bg-[#fff1eb] hover:text-foreground"
         aria-label="Close dialog"
       >
         <X className="size-4" />

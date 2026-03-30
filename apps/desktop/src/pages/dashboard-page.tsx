@@ -194,7 +194,7 @@ export function DashboardPage() {
         <>
           <section className="grid gap-4 xl:grid-cols-[minmax(0,1.28fr)_420px]">
             <Card className="relative overflow-hidden">
-              <div className="absolute inset-y-0 right-0 hidden w-[38%] bg-[radial-gradient(circle_at_top,rgba(111,219,255,0.2),transparent_56%)] lg:block" />
+              <div className="absolute inset-y-0 right-0 hidden w-[38%] bg-[radial-gradient(circle_at_top,rgba(255,195,184,0.42),transparent_56%)] lg:block" />
               <CardContent className="relative grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-end">
                 <div>
                   <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-accent">
@@ -270,7 +270,7 @@ export function DashboardPage() {
                     </div>
                   </>
                 ) : (
-                  <div className="flex flex-1 flex-col justify-between gap-4 rounded-[28px] border border-dashed border-white/10 bg-white/[0.03] p-5">
+                  <div className="flex flex-1 flex-col justify-between gap-4 rounded-[28px] border border-dashed border-[#eadfd8] bg-white/70 p-5">
                     <div>
                       <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
                         No Target Yet
@@ -368,7 +368,7 @@ export function DashboardPage() {
                   latestPlanning.scenarios.map((scenario) => (
                     <div
                       key={scenario.scenarioId}
-                      className="grid gap-4 rounded-[24px] border border-white/8 bg-white/[0.03] p-4 lg:grid-cols-[160px_minmax(0,1fr)_110px] lg:items-center"
+                      className="grid gap-4 rounded-[24px] border border-[#eadfd8] bg-white/70 p-4 lg:grid-cols-[160px_minmax(0,1fr)_110px] lg:items-center"
                     >
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
@@ -398,14 +398,14 @@ export function DashboardPage() {
             </Card>
 
             <Link to="/planning?focus=saved" className="block">
-              <Card className="transition-all duration-200 hover:border-accent/22 hover:bg-white/[0.05] hover:shadow-[0_28px_90px_-36px_rgba(111,219,255,0.24)]">
+              <Card className="transition-all duration-200 hover:border-accent/22 hover:bg-[#fff2eb] hover:shadow-[0_28px_90px_-36px_rgba(223,127,93,0.2)]">
               <CardHeader>
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <CardTitle>最近规划摘要</CardTitle>
                     <CardDescription>点击这张卡片，就能回到规划页继续查看最近一次保存结果，不用再凭记忆重建。</CardDescription>
                   </div>
-                  <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-foreground/76">
+                  <div className="flex items-center gap-2 rounded-full border border-[#eadfd8] bg-white/78 px-3 py-1 text-xs text-foreground/76">
                     <Clock3 className="size-3.5 text-accent" />
                     恢复查看
                   </div>
@@ -414,7 +414,7 @@ export function DashboardPage() {
               <CardContent className="flex flex-col gap-4">
                 {latestPlanning ? (
                   <>
-                    <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                    <div className="rounded-[24px] border border-[#eadfd8] bg-white/70 p-4">
                       <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
                         Latest Target
                       </div>
@@ -612,10 +612,10 @@ function SnapshotLine({
   icon: ReactNode;
 }) {
   return (
-    <div className="rounded-[22px] border border-white/8 bg-black/15 px-4 py-3">
+    <div className="rounded-[22px] border border-[#eadfd8] bg-[#fff3ec] px-4 py-3">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="flex size-9 items-center justify-center rounded-2xl bg-white/[0.05] text-foreground/84">
+          <div className="flex size-9 items-center justify-center rounded-2xl bg-[#fff2eb] text-foreground/72">
             {icon}
           </div>
           <div>
@@ -641,7 +641,7 @@ function Suggestion({
   buttonLabel: string;
 }) {
   return (
-    <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+    <div className="rounded-[24px] border border-[#eadfd8] bg-white/70 p-4">
       <div className="text-sm font-semibold text-foreground">{title}</div>
       <div className="mt-2 text-sm leading-6 text-muted-foreground">{description}</div>
       <Button variant="secondary" asChild className="mt-4">

@@ -16,16 +16,16 @@
 }
 
 :root {
-  --background: 223 29% 8%;
-  --foreground: 215 26% 96%;
-  --card: 221 25% 11%;
-  --card-foreground: 215 26% 96%;
-  --muted: 223 18% 18%;
-  --muted-foreground: 215 14% 68%;
-  --border: 220 18% 20%;
-  --ring: 191 88% 64%;
-  --accent: 191 88% 64%;
-  color-scheme: dark;
+  --background: 28 58% 97%;
+  --foreground: 18 28% 19%;
+  --card: 30 62% 98%;
+  --card-foreground: 18 28% 19%;
+  --muted: 24 42% 93%;
+  --muted-foreground: 20 16% 44%;
+  --border: 22 30% 86%;
+  --ring: 22 92% 67%;
+  --accent: 18 94% 70%;
+  color-scheme: light;
 }
 
 @layer base {
@@ -46,14 +46,15 @@
   body {
     @apply min-h-screen bg-background font-sans text-foreground antialiased;
     background-image:
-      radial-gradient(circle at top left, rgba(97, 218, 251, 0.14), transparent 28%),
-      radial-gradient(circle at 85% 18%, rgba(255, 255, 255, 0.08), transparent 22%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 30%);
+      radial-gradient(circle at 8% 8%, rgba(255, 201, 214, 0.52), transparent 26%),
+      radial-gradient(circle at 88% 14%, rgba(255, 210, 169, 0.44), transparent 24%),
+      radial-gradient(circle at 52% 0%, rgba(255, 243, 233, 0.78), transparent 30%),
+      linear-gradient(180deg, rgba(255, 253, 249, 0.96), rgba(250, 241, 234, 0.88));
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
   ::selection {
-    background: rgba(111, 219, 255, 0.22);
+    background: rgba(255, 190, 168, 0.42);
   }
 }
 
@@ -68,10 +69,10 @@
     inset: 0;
     pointer-events: none;
     background-image:
-      linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+      linear-gradient(rgba(193, 166, 148, 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(193, 166, 148, 0.08) 1px, transparent 1px);
     background-size: 72px 72px;
     mask-image: radial-gradient(circle at center, black 20%, transparent 80%);
-    opacity: 0.2;
+    opacity: 0.34;
   }
 }
